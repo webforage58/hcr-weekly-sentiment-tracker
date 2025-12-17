@@ -1,0 +1,5 @@
+{
+  "name": "HCR Weekly Sentiment Tracker",
+  "description": "A dashboard to visualize Heather Cox Richardson's weekly sentiment analysis based on generated JSON reports.",
+  "requestFramePermissions": []
+}
