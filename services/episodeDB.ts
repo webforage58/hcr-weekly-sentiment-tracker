@@ -238,7 +238,9 @@ export async function getEpisodesByDateRange(startDate: string, endDate: string)
     const index = tx.store.index('by-published-date');
 
     // Get all episodes in the date range using the index
-    const episodes = await index.getAll(IDBKeyRange.bound(startDate, endDate));
+    // Include timestamped values on the end date (e.g., "YYYY-MM-DDTHH:mm:ssZ") by widening the upper bound.
+    const upperBound = `${endDate}\uffff`;
+    const episodes = await index.getAll(IDBKeyRange.bound(startDate, upperBound));
 
     await tx.done;
     console.log(`Retrieved ${episodes.length} episodes between ${startDate} and ${endDate}`);

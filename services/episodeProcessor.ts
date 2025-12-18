@@ -33,6 +33,9 @@ export interface ProcessOptions {
 
   /** Callback fired when episode discovery completes */
   onDiscoveryComplete?: (totalEpisodes: number, cachedCount: number, newCount: number) => void;
+
+  /** Optional abort signal for cancelling work */
+  signal?: AbortSignal;
 }
 
 /**
@@ -61,12 +64,13 @@ export interface ProcessResult {
 /**
  * Default processing options
  */
-const DEFAULT_OPTIONS: Required<ProcessOptions> = {
+const DEFAULT_OPTIONS: ProcessOptions = {
   concurrency: 10,
   forceReprocess: false,
   frameworkVersion: 'v2',
   onProgress: () => {},
-  onDiscoveryComplete: () => {}
+  onDiscoveryComplete: () => {},
+  signal: undefined
 };
 
 /**
@@ -91,15 +95,29 @@ export async function processEpisodesInRange(
   options: ProcessOptions = {}
 ): Promise<ProcessResult> {
   const opts = { ...DEFAULT_OPTIONS, ...options };
+  const concurrency = opts.concurrency ?? 10;
   const startTime = performance.now();
+  const abortSignal = opts.signal;
+  const onProgress = opts.onProgress ?? (() => {});
+  const onDiscoveryComplete = opts.onDiscoveryComplete ?? (() => {});
 
   console.log(`[EpisodeProcessor] Processing episodes from ${startDate} to ${endDate}`);
-  console.log(`[EpisodeProcessor] Concurrency: ${opts.concurrency}, Force reprocess: ${opts.forceReprocess}`);
+  console.log(`[EpisodeProcessor] Concurrency: ${concurrency}, Force reprocess: ${opts.forceReprocess}`);
+
+  const throwIfAborted = () => {
+    if (abortSignal?.aborted) {
+      throw new Error('Processing cancelled');
+    }
+  };
 
   try {
+    throwIfAborted();
+
     // Phase 1: Discover episodes in date range
     console.log('[EpisodeProcessor] Phase 1: Discovering episodes...');
     const searchResults = await searchEpisodesInRange(startDate, endDate);
+
+    throwIfAborted();
 
     if (searchResults.length === 0) {
       console.warn('[EpisodeProcessor] No episodes found in date range');
@@ -127,19 +145,31 @@ export async function processEpisodesInRange(
 
     console.log(`[EpisodeProcessor] Cache status: ${cached.length} cached, ${uncached.length} new`);
 
+    throwIfAborted();
+
     // Notify discovery complete
-    opts.onDiscoveryComplete(
-      searchResults.length,
-      cached.length,
-      uncached.length
-    );
+    onDiscoveryComplete(searchResults.length, cached.length, uncached.length);
+
+    // Progress through cached episodes to keep UI aligned
+    let completedCount = 0;
+    if (cached.length > 0) {
+      cached.forEach(ep => {
+        completedCount += 1;
+        onProgress(
+          completedCount,
+          searchResults.length,
+          ep.title || ep.episode_id,
+          true
+        );
+      });
+    }
 
     // Phase 3: Process uncached episodes in parallel
     const errors: Array<{ episodeId: string; error: string }> = [];
     let newlyAnalyzed: EpisodeInsight[] = [];
 
     if (uncached.length > 0) {
-      console.log(`[EpisodeProcessor] Phase 3: Analyzing ${uncached.length} episodes (concurrency: ${opts.concurrency})...`);
+      console.log(`[EpisodeProcessor] Phase 3: Analyzing ${uncached.length} episodes (concurrency: ${concurrency})...`);
 
       const analysisResult = await processInParallel(
         uncached,
@@ -161,15 +191,17 @@ export async function processEpisodesInRange(
             return { success: false, insight: null, error: errorMsg };
           }
         },
-        opts.concurrency,
+        concurrency,
         (completed, total, current) => {
-          opts.onProgress(
-            cached.length + completed,
+          completedCount += 1;
+          onProgress(
+            completedCount,
             searchResults.length,
             current?.title || 'Unknown episode',
             false // Not cached
           );
-        }
+        },
+        abortSignal
       );
 
       // Separate successful and failed analyses
@@ -189,6 +221,8 @@ export async function processEpisodesInRange(
     } else {
       console.log('[EpisodeProcessor] Phase 3: All episodes cached, skipping analysis');
     }
+
+    throwIfAborted();
 
     // Combine cached and newly analyzed episodes
     const allEpisodes = [...cached, ...newlyAnalyzed];
@@ -273,7 +307,8 @@ async function processInParallel<T, R>(
   items: T[],
   processor: (item: T) => Promise<R>,
   concurrency: number,
-  onProgress?: (completed: number, total: number, current: T | null) => void
+  onProgress?: (completed: number, total: number, current: T | null) => void,
+  signal?: AbortSignal
 ): Promise<R[]> {
   const results: R[] = [];
   const queue = [...items];
@@ -284,6 +319,8 @@ async function processInParallel<T, R>(
    */
   async function worker(): Promise<void> {
     while (queue.length > 0) {
+      if (signal?.aborted) break;
+
       const item = queue.shift();
       if (!item) break;
 
@@ -296,6 +333,8 @@ async function processInParallel<T, R>(
         if (onProgress) {
           onProgress(completed, items.length, item);
         }
+
+        if (signal?.aborted) break;
       } catch (error) {
         console.error('[ProcessInParallel] Worker error:', error);
         // Error handling is done in processor, this is just a safety net

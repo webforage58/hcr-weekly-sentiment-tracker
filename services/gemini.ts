@@ -1,6 +1,6 @@
 
 import { GoogleGenAI, HarmCategory, HarmBlockThreshold, GenerateContentResponse } from "@google/genai";
-import { HCRReport, MarketAnalysisResult, EpisodeInsight, EpisodeMetadata } from "../types";
+import { HCRReport, MarketAnalysisResult, EpisodeInsight, EpisodeMetadata, TopicInsight } from "../types";
 
 const PROMPT_TEMPLATE = `
 You are an AI political analysis assistant performing evidence-grounded weekly sentiment and issue tracking.
@@ -214,6 +214,47 @@ function cleanJsonText(text: string): string {
   return text.trim();
 }
 
+function normalizeDateYmd(value: unknown, fallback: string): string {
+  if (typeof value === "string") {
+    const match = value.match(/^\d{4}-\d{2}-\d{2}/);
+    if (match) return match[0];
+    const parsed = new Date(value);
+    if (!isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
+  }
+
+  // Fallback might already be YYYY-MM-DD; preserve it as best-effort.
+  if (typeof fallback === "string") {
+    const match = fallback.match(/^\d{4}-\d{2}-\d{2}/);
+    if (match) return match[0];
+  }
+  return fallback;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function clamp01(value: number): number {
+  return clamp(value, 0, 1);
+}
+
+function coerceNumber(value: unknown, fallback: number | null = null): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+}
+
+function coerceStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item: unknown) => typeof item === "string")
+    .map(item => item.trim())
+    .filter(item => item.length > 0);
+}
+
 export async function generateReport(start: string, end: string, priorStart: string, priorEnd: string): Promise<HCRReport> {
   const prompt = PROMPT_TEMPLATE
     .replace('{{WINDOW_START}}', start)
@@ -288,21 +329,81 @@ export async function analyzeEpisode(
 
     const cleanText = cleanJsonText(text);
     try {
-      const parsed = JSON.parse(cleanText);
+      const raw = JSON.parse(cleanText) as any;
 
-      // Add metadata fields that come from the system, not the AI
-      parsed.framework_version = frameworkVersion;
-      parsed.processed_at = new Date().toISOString();
-      parsed.model_used = 'gemini-3-flash-preview';
+      const topicsRaw = Array.isArray(raw?.topics) ? raw.topics : [];
+      const topics: TopicInsight[] = topicsRaw
+        .map((topic: any): TopicInsight | null => {
+          const topicName = String(topic?.topic_name ?? topic?.name ?? topic?.topic ?? "").trim();
+          if (!topicName) return null;
 
-      // Validate required fields are present
-      if (!parsed.episode_id || !parsed.topics || !Array.isArray(parsed.topics)) {
+          const sentiment = coerceNumber(topic?.sentiment_score ?? topic?.sentiment);
+          if (sentiment === null) return null;
+
+          const confidence = coerceNumber(topic?.confidence, 0.6);
+          const prominence = coerceNumber(
+            topic?.prominence_score ?? topic?.prominence ?? topic?.prominenceScore,
+            0.3
+          );
+
+          const evidenceQuotes =
+            coerceStringArray(topic?.evidence_quotes ?? topic?.evidenceQuotes ?? topic?.quotes ?? topic?.evidence);
+
+          return {
+            topic_name: topicName,
+            sentiment_score: clamp(sentiment, 0, 100),
+            confidence: clamp01(confidence ?? 0.6),
+            evidence_quotes: evidenceQuotes,
+            prominence_score: clamp01(prominence ?? 0.3)
+          };
+        })
+        .filter((topic): topic is TopicInsight => Boolean(topic));
+
+      if (topicsRaw.length > 0 && topics.length === 0) {
+        throw new Error("Invalid episode insight structure: topics present but not parseable");
+      }
+
+      const publishedAt = normalizeDateYmd(raw?.published_at ?? episodeMetadata.published_at, episodeMetadata.published_at);
+      const transcriptUrlRaw = raw?.transcript_url ?? episodeMetadata.transcript_url ?? null;
+      const transcriptUrl = typeof transcriptUrlRaw === "string" && transcriptUrlRaw.trim().length > 0
+        ? transcriptUrlRaw
+        : undefined;
+
+      const overallSentimentRaw = coerceNumber(raw?.overall_sentiment);
+      const overallSentiment = overallSentimentRaw !== null
+        ? clamp(overallSentimentRaw, 0, 100)
+        : (topics.length > 0 ? clamp(topics.reduce((sum, t) => sum + t.sentiment_score, 0) / topics.length, 0, 100) : 50);
+
+      const keyQuotes = coerceStringArray(raw?.key_quotes ?? raw?.keyQuotes);
+      const fallbackQuotes = topics.flatMap(t => t.evidence_quotes).slice(0, 5);
+
+      const parsed: EpisodeInsight = {
+        episode_id: String(raw?.episode_id ?? episodeId),
+        show_name: String(raw?.show_name ?? episodeMetadata.show_name),
+        title: String(raw?.title ?? episodeMetadata.title),
+        published_at: publishedAt,
+        transcript_url: transcriptUrl,
+        topics,
+        overall_sentiment: overallSentiment,
+        trump_admin_focus: typeof raw?.trump_admin_focus === "boolean"
+          ? raw.trump_admin_focus
+          : topics.length > 0,
+        key_quotes: keyQuotes.length > 0 ? keyQuotes : fallbackQuotes,
+        framework_version: frameworkVersion,
+        processed_at: new Date().toISOString(),
+        model_used: 'gemini-3-flash-preview'
+      };
+
+      if (!parsed.episode_id || !Array.isArray(parsed.topics)) {
         throw new Error("Invalid episode insight structure: missing required fields");
       }
 
-      return parsed as EpisodeInsight;
+      return parsed;
     } catch (e) {
-      console.error("JSON Parse Error in analyzeEpisode:", e, "Text:", cleanText);
+      console.error("Episode insight parse/validation error in analyzeEpisode:", e, "Text:", cleanText);
+      if (e instanceof Error) {
+        throw e;
+      }
       throw new Error("JSON_PARSE_ERROR");
     }
   });

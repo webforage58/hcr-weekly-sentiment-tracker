@@ -116,6 +116,21 @@ export interface EpisodeInsight {
   model_used: string;            // e.g., "gemini-3-flash-preview"
 }
 
+export interface RankedIssue {
+  issue_name: string;
+  normalized_name: string;
+  avg_sentiment: number;
+  avg_confidence: number;
+  avg_prominence: number;
+  episode_count: number;
+  rank_score: number;
+  sentiment_values: number[];
+  episode_ids: string[];
+  evidence_quotes: string[];
+  latest_published_at: string | null;
+  recency_days: number;
+}
+
 export interface AggregatedIssue {
   issue_name: string;
   avg_sentiment: number;

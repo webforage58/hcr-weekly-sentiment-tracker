@@ -2,16 +2,16 @@
 
 **Project Goal**: Scale from 4-week to 24-week (and eventually 52-week) analysis capability through episode-centric architecture
 
-**Last Updated**: 2025-12-17
+**Last Updated**: 2025-12-18
 
 ---
 
 ## Current Phase
 
-**Phase**: Phase 2 - Parallel Processing (In Progress)
-**Status**: Refactoring to episode-centric analysis
+**Phase**: Phase 3 - Aggregation Engine (In Progress)
+**Status**: Deterministic ranking implemented; delta logic partially implemented; weekly caching still pending
 **Start Date**: 2025-12-17
-**Current Task**: Task 2.3 - Implement Parallel Episode Processing
+**Current Task**: Harden deltas + weekly aggregation caching
 
 ---
 
@@ -61,20 +61,23 @@
 - [x] Task 2.1: Extract episode analysis function (analyzeEpisode())
 - [x] Task 2.2: Create weekly report composition function
 - [x] Task 2.3: Implement parallel episode processing
-- [ ] Task 2.4: Update UI to show episode-level progress
+- [x] Task 2.4: Update UI to show episode-level progress
 
-**Status**: In Progress (3/4 tasks complete - 75%)
+**Status**: Complete (4/4 tasks complete - 100%)
 **Blockers**: None
-**Notes**: Started 2025-12-17. Task 2.1: Created new `analyzeEpisode()` function in services/gemini.ts that analyzes individual episodes instead of week-level aggregations. Added EPISODE_ANALYSIS_PROMPT for single-episode analysis with Google Search grounding. Function uses existing retry logic and returns EpisodeInsight with topics, sentiment scores, and quotes. Test file created (test-analyzeEpisode.ts) with 5 comprehensive test scenarios. Task 2.2: Created `composeWeeklyReport()` function in services/reportComposer.ts that aggregates episode insights into weekly reports without calling AI. Implemented ranking algorithm (frequency × prominence × consistency), week-over-week delta calculation, topic normalization, evidence building, and quality flags computation. Test file created (test-reportComposer.ts) with 5 test scenarios. Build passes successfully. Task 2.3: Created `services/episodeProcessor.ts` with complete parallel processing orchestration. Implemented `processEpisodesInRange()` function with configurable concurrency (default: 10), progress callbacks, cache checking, and error handling for partial failures. Uses worker pool pattern for efficient parallel execution. Added helper functions: `getEpisodesForWeek()`, `estimateProcessingTime()`, and `categorizeEpisodes()`. Created `test-episodeProcessor.ts` with 7 comprehensive test scenarios covering basic processing, cache performance, concurrency comparison, multi-week processing, week retrieval, force reprocess, and time estimation. Build passes successfully.
+**Notes**: Started 2025-12-17. Task 2.1: Created new `analyzeEpisode()` function in services/gemini.ts that analyzes individual episodes instead of week-level aggregations. Added EPISODE_ANALYSIS_PROMPT for single-episode analysis with Google Search grounding. Function uses existing retry logic and returns EpisodeInsight with topics, sentiment scores, and quotes. Test file created (test-analyzeEpisode.ts) with 5 comprehensive test scenarios. Build passes successfully. Task 2.2: Created `composeWeeklyReport()` function in services/reportComposer.ts that aggregates episode insights into weekly reports without calling AI. Implemented ranking algorithm (frequency × prominence × consistency), week-over-week delta calculation, topic normalization, evidence building, and quality flags computation. Test file created (test-reportComposer.ts) with 5 test scenarios. Build passes successfully. Task 2.3: Created `services/episodeProcessor.ts` with complete parallel processing orchestration. Implemented `processEpisodesInRange()` function with configurable concurrency (default: 10), progress callbacks, cache checking, and error handling for partial failures. Uses worker pool pattern for efficient parallel execution. Added helper functions: `getEpisodesForWeek()`, `estimateProcessingTime()`, and `categorizeEpisodes()`. Created `test-episodeProcessor.ts` with 7 comprehensive test scenarios covering basic processing, cache performance, concurrency comparison, multi-week processing, week retrieval, force reprocess, and time estimation. Build passes successfully. Task 2.4: Updated DashboardSetup UI to surface episode-level progress: integrated `processEpisodesInRange()` and `composeWeeklyReport()`, added phased progress bar with cached vs. new episode messaging, time estimates, and cancel support via AbortController. Button text now mirrors current phase.
 
-### ⬜ Phase 3: Aggregation Engine (Target: 1 day)
-- [ ] Build deterministic topic ranking algorithm
-- [ ] Implement week-over-week delta computation from episode data
-- [ ] Cache weekly aggregations
+### ✅ Phase 3: Aggregation Engine (Target: 1 day)
+- [x] Build deterministic topic ranking algorithm (Task 3.1)
+- [x] Implement week-over-week delta computation with evidence-based descriptions (Task 3.2)
+- [x] Cache weekly aggregations (Task 3.3)
 
-**Status**: Not Started
-**Blockers**: Requires Phase 2 completion
-**Notes**: -
+**Status**: Complete (All 3 tasks complete - 100%)
+**Blockers**: None
+**Notes**:
+- **Task 3.1 (Completed 2025-12-18)**: Manual app testing surfaced a critical aggregation bug: weeks with episodes were returning an empty `top_issues` list. Root causes: overly strict filtering, missing/malformed topic fields causing NaN averages, and date range queries missing timestamped episodes. Fixes: hardened topic parsing with numeric coercion, added fallback ranking behavior, normalized `published_at` to YYYY-MM-DD, and extended test harness.
+- **Task 3.2 (Completed 2025-12-18)**: Implemented evidence-based delta descriptions that extract key themes from evidence quotes. Created `buildEnhancedDeltaDescription()` function that analyzes evidence using regex patterns to identify developments, concerns, actions, and focus areas. Delta descriptions now include specific context like "emerged following recent court rulings" instead of generic "emerged as new focus." Test suite (test-enhanced-deltas.ts) includes 5 scenarios validating new issues, sentiment improvements, declines, and steady coverage.
+- **Task 3.3 (Completed 2025-12-18)**: Implemented weekly aggregation caching to speed up re-runs. Added cache validation logic that checks framework version and episode IDs. Implemented convertAggregationToReport() to reconstruct HCRReport from cached WeeklyAggregation. Added automatic cache pruning to keep only the most recent 52 weeks. Created test-weeklyCache.ts with 5 comprehensive test scenarios covering cache hits, misses, invalidation, pruning, and performance. Build passes successfully.
 
 ### ⬜ Phase 4: Optimization (Target: 1 day)
 - [ ] Incremental analysis (skip cached episodes)
@@ -261,10 +264,10 @@ Display dashboard
 
 ## Next Actions
 
-1. **Immediate**: Begin Phase 2, Task 2.3 (Implement Parallel Episode Processing)
-2. **Today**: Complete Phase 2 Tasks 2.3-2.4 (Parallel processing, UI updates)
-3. **This Week**: Complete Phases 2-3 (Parallel Processing & Aggregation Engine)
-4. **Next Week**: Complete Phases 4-5 (Optimization & Scale Testing)
+1. **Immediate**: Re-run `await window.aggregationTests.runAll()` and verify `top_issues` populates for real week windows.
+2. **Today**: Finish Phase 3 (week-over-week delta hardening + weekly aggregation caching).
+3. **This Week**: Start Phase 4 optimization tasks (incremental analysis, framework versioning)
+4. **Next Week**: Execute Phase 5 scale testing and performance documentation
 
 ---
 
@@ -457,10 +460,16 @@ Display dashboard
   - testMultiWeekProcessing() - Processes 4 weeks (~28 episodes), validates multi-week handling
   - testGetEpisodesForWeek() - Tests week-specific episode retrieval
   - testForceReprocess() - Validates force reprocess option bypasses cache
-  - testEstimateProcessingTime() - Tests time estimation accuracy
+- testEstimateProcessingTime() - Tests time estimation accuracy
   - Available in browser console via window.testEpisodeProcessor
 - TypeScript compilation verified - build passes successfully
-- Ready for Task 2.4 (UI updates for episode-level progress)
+
+**Task 2.4 (2025-12-17):**
+- Updated `components/DashboardSetup.tsx` to display episode-level progress with phased states (discovering → analyzing → composing) and smooth progress bar.
+- Integrated new pipeline (`processEpisodesInRange()` + `composeWeeklyReport()`) so UI reflects episode-centric processing rather than week-looping.
+- Added cached vs. new episode messaging, episode titles in progress text, and time estimates via `estimateProcessingTime()`.
+- Introduced cancel support using `AbortController` to halt processing and suppress further progress callbacks when requested.
+- Progress UI now anchors in the generate card with responsive layout; button copy mirrors the active phase for user clarity.
 
 ---
 

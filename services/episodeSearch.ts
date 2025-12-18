@@ -136,6 +136,18 @@ function normalizeEpisodeId(episode: any): string {
   return `${showSlug}-${episode.published_at}`;
 }
 
+function normalizePublishedAt(value: unknown, fallback: string): string {
+  if (typeof value === "string") {
+    const match = value.match(/^\d{4}-\d{2}-\d{2}/);
+    if (match) return match[0];
+    const parsed = new Date(value);
+    if (!isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
+  }
+
+  const fallbackMatch = fallback.match(/^\d{4}-\d{2}-\d{2}/);
+  return fallbackMatch ? fallbackMatch[0] : fallback;
+}
+
 /**
  * Deduplicate episodes by episode_id
  */
@@ -230,12 +242,13 @@ export async function searchEpisodesInRange(
       const normalized = parsed.map((ep: any) => {
         // Normalize the episode ID
         const episodeId = normalizeEpisodeId(ep);
+        const publishedAt = normalizePublishedAt(ep.published_at, startDate);
 
         return {
           episode_id: episodeId,
           show_name: ep.show_name || 'Unknown Show',
           title: ep.title || 'Untitled Episode',
-          published_at: ep.published_at || startDate,
+          published_at: publishedAt,
           transcript_url: ep.transcript_url === 'null' || !ep.transcript_url ? undefined : ep.transcript_url
         } as EpisodeMetadata;
       });

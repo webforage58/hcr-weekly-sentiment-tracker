@@ -710,9 +710,10 @@ async function processInParallel<T, R>(
 ---
 
 ### Task 2.4: Update DashboardSetup UI for Episode Progress
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **Priority**: Medium
 **Estimated Time**: 1.5 hours
+**Completed**: 2025-12-17
 
 **Description**:
 Enhance the UI to show episode-level progress instead of week-level progress during analysis.
@@ -760,25 +761,33 @@ const [progress, setProgress] = useState({
 ```
 
 **Acceptance Criteria**:
-- [ ] Progress bar updates smoothly during analysis
-- [ ] Episode titles shown in progress message
-- [ ] Clear distinction between cached and new episodes
-- [ ] UI is responsive during long operations
-- [ ] Cancel button stops processing gracefully
+- [x] Progress bar updates smoothly during analysis
+- [x] Episode titles shown in progress message
+- [x] Clear distinction between cached and new episodes
+- [x] UI is responsive during long operations
+- [x] Cancel button stops processing gracefully
 
 **Files to Modify**:
 - `components/DashboardSetup.tsx`
 
 **Dependencies**: Task 2.3 complete
 
+**Implementation Notes**:
+- Replaced week-by-week loop with `processEpisodesInRange()` + per-week `composeWeeklyReport()` to align UI with episode-centric pipeline.
+- Added structured progress state (discovering → analyzing → composing) with smooth progress bar, episode title messaging, and cached vs. new labeling.
+- Added time estimates using `estimateProcessingTime()` and surfaced discovery stats (cached/new counts) inline.
+- Introduced cancel support via `AbortController`, halting further work and short-circuiting progress updates when requested.
+- Progress block now sits in the Generate card for visibility; button text mirrors phase (discovering/analyzing/composing).
+
 ---
 
 ## Phase 3: Aggregation Engine (Target: 1 day)
 
 ### Task 3.1: Build Deterministic Topic Ranking Algorithm
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **Priority**: High
 **Estimated Time**: 2 hours
+**Completed**: 2025-12-18
 
 **Description**:
 Implement robust logic for ranking and selecting top 5 issues from episode topics.
@@ -796,6 +805,7 @@ Implement robust logic for ranking and selecting top 5 issues from episode topic
 3. Add configurable minimum thresholds:
    - Must appear in at least 2 episodes (for multi-episode weeks)
    - Must have avg prominence > 0.2
+   - Fallback: if thresholds produce 0 issues, relax filtering so the UI doesn't show an empty report when topics exist
 4. Implement tiebreaker logic (most recent episode wins)
 5. Add unit tests with example episode data
 
@@ -825,11 +835,16 @@ function calculateRankScore(factors: RankingFactors): number {
 ```
 
 **Acceptance Criteria**:
-- [ ] Algorithm produces stable, sensible rankings
-- [ ] Top 5 issues are most prominent across episodes
-- [ ] Similar topics are merged (not duplicated)
-- [ ] Algorithm is deterministic (same input → same output)
-- [ ] Performance: ranks 50+ topics in <100ms
+- [x] Algorithm produces stable, sensible rankings
+- [x] Top 5 issues are most prominent across episodes
+- [x] Similar topics are merged (not duplicated)
+- [x] Algorithm is deterministic (same input → same output)
+- [x] Performance: ranks 50+ topics in <100ms
+
+**Implementation Notes**:
+- Hardened topic field handling (coerces numeric fields, tolerates alternate field names) to prevent NaN-driven empty rankings.
+- Added fallback ranking behavior to avoid returning zero issues when per-episode topics exist but don't meet cross-episode thresholds.
+- Extended manual harness (`window.aggregationTests`) with a single-mention scenario to validate non-empty output.
 
 **Files to Create**:
 - `utils/aggregation.ts`
@@ -840,12 +855,13 @@ function calculateRankScore(factors: RankingFactors): number {
 ---
 
 ### Task 3.2: Implement Week-Over-Week Delta Calculation
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **Priority**: High
 **Estimated Time**: 1.5 hours
+**Completed**: 2025-12-18
 
 **Description**:
-Build logic to compute sentiment changes between current and prior week.
+Build logic to compute sentiment changes between current and prior week with evidence-based descriptions.
 
 **Steps**:
 1. In `utils/aggregation.ts`, create:
@@ -899,23 +915,46 @@ function computeDelta(current: RankedIssue, prior: RankedIssue | null): DeltaRes
 ```
 
 **Acceptance Criteria**:
-- [ ] Deltas calculate correctly for matched issues
-- [ ] New issues identified properly
-- [ ] Dropped issues tracked in separate list
-- [ ] Delta descriptions are informative
-- [ ] Handles missing prior week gracefully
+- [x] Deltas calculate correctly for matched issues
+- [x] New issues identified properly
+- [x] Dropped issues tracked in separate list
+- [x] Delta descriptions are informative (evidence-based)
+- [x] Handles missing prior week gracefully
 
-**Files to Modify**:
-- `utils/aggregation.ts`
+**Files Modified**:
+- `utils/aggregation.ts` - Core delta computation logic
+- `services/reportComposer.ts` - Evidence-based description generation
 
-**Dependencies**: Task 3.1 complete
+**Files Created**:
+- `test-enhanced-deltas.ts` - Comprehensive test suite for delta descriptions
+
+**Implementation Notes**:
+- Created `computeDeltas()` function in `aggregation.ts` for core delta calculation
+- Implemented fuzzy topic matching using similarity scoring (threshold: 0.78)
+- Added `buildEnhancedDeltaDescription()` in `reportComposer.ts` for evidence-based narratives
+- Created `extractKeyThemesFromEvidence()` to analyze quotes using regex patterns for:
+  - Developments and events (following, after, due to, amid)
+  - Concerns and criticism (concerns about, criticism of)
+  - Specific actions (announced, proposed, passed, rejected)
+  - Focus areas (focus on, attention to)
+- Enhanced descriptions now include:
+  - New issues: "emerged following [specific event from evidence]"
+  - Improving sentiment: "improved (+X pts) amid [positive development]"
+  - Declining sentiment: "declined (-X pts) amid concerns about [specific concern]"
+  - Steady issues: "maintained steady coverage with continued discussion of [theme]"
+- Falls back to generic descriptions when evidence extraction fails
+- Test suite includes 5 scenarios validating all movement types
+- Build passes successfully - TypeScript compilation verified
+
+**Dependencies**: Task 3.1 complete ✅
 
 ---
 
 ### Task 3.3: Implement Weekly Aggregation Caching
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **Priority**: Medium
 **Estimated Time**: 1 hour
+**Completed**: 2025-12-18
 
 **Description**:
 Cache computed weekly aggregations to speed up re-runs and multi-week analysis.
@@ -975,16 +1014,40 @@ async function getOrComputeWeeklyReport(
 ```
 
 **Acceptance Criteria**:
-- [ ] Re-running same week uses cached aggregation (instant)
-- [ ] Cache invalidates when underlying episodes change
-- [ ] Cache pruning prevents unbounded growth
-- [ ] Cache hits logged for debugging
+- [x] Re-running same week uses cached aggregation (instant)
+- [x] Cache invalidates when underlying episodes change
+- [x] Cache pruning prevents unbounded growth
+- [x] Cache hits logged for debugging
 
-**Files to Modify**:
-- `services/reportComposer.ts`
-- `services/episodeDB.ts` (add cache management functions)
+**Files Modified**:
+- `services/reportComposer.ts` - Added caching logic with validation and pruning
+- `index.tsx` - Imported test file for browser console access
 
-**Dependencies**: Tasks 3.1, 3.2 complete
+**Files Created**:
+- `test-weeklyCache.ts` - Comprehensive test suite with 5 test scenarios
+
+**Implementation Notes**:
+- Added framework version constant (CURRENT_FRAMEWORK_VERSION = 'v2.0.0') for cache validation
+- Created validateWeeklyCache() function that checks:
+  - Framework version matches current version
+  - Episode IDs match between cache and database
+  - Episode counts match
+  - All episodes have current framework version
+- Implemented convertAggregationToReport() to reconstruct full HCRReport from cached WeeklyAggregation
+- Added cache check at start of composeWeeklyReport()
+- Cache validation logs clear messages (cache hit/miss/invalid)
+- Added automatic caching after report composition
+- Implemented pruneOldWeeklyAggregations() to keep only most recent 52 weeks
+- Pruning runs automatically after each cache save (non-blocking)
+- Test suite includes 5 scenarios:
+  1. Cache hit - second call uses cached data
+  2. Cache miss - no cached data exists
+  3. Cache invalidation - framework version mismatch
+  4. Cache pruning - keeps only 52 most recent weeks
+  5. Cache performance - compares first run vs cached run
+- Build passes successfully - TypeScript compilation verified
+
+**Dependencies**: Tasks 3.1, 3.2 complete ✅
 
 ---
 

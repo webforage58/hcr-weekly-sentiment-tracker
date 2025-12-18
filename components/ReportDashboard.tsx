@@ -100,9 +100,9 @@ export const ReportDashboard: React.FC<Props> = ({ data }) => {
         </div>
 
         {/* Sentiment Chart */}
-        <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+        <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-slate-200 p-6 min-w-0">
           <h3 className="text-lg font-bold mb-6 text-slate-900 serif">Sentiment Index: Top Issues</h3>
-          <div className="h-64 w-full">
+          <div className="h-64 w-full min-w-0">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />

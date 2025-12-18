@@ -7,29 +7,234 @@ import type {
   Evidence,
   AnalyzedSource,
   EpisodeInsight,
-  TopicInsight
+  RankedIssue,
+  WeeklyAggregation,
+  AggregatedIssue
 } from '../types';
-import { getEpisodesByDateRange } from './episodeDB';
+import {
+  getEpisodesByDateRange,
+  getWeeklyAggregation,
+  saveWeeklyAggregation,
+  getAllWeeklyAggregations,
+  deleteWeeklyAggregation
+} from './episodeDB';
+import { computeDeltas, normalizeTopic, rankIssues, DeltaResult } from '../utils/aggregation';
+
+// Current framework version for cache validation
+const CURRENT_FRAMEWORK_VERSION = 'v2.0.0';
+
+// Algorithm version hash - update when ranking/aggregation logic changes
+// This ensures cache invalidation when the composition algorithm changes
+const AGGREGATION_ALGORITHM_VERSION = 'v2.0.0';
 
 /**
- * Internal structure for ranking issues during aggregation
+ * Validates whether a cached weekly aggregation is still valid.
+ * Returns true if all episodes in the cache match current database state.
  */
-interface RankedIssue {
-  issue_name: string;
-  normalized_name: string; // For matching similar topics
-  avg_sentiment: number;
-  avg_confidence: number;
-  avg_prominence: number;
-  episode_count: number;
-  rank_score: number;
-  evidence_quotes: string[];
-  episode_ids: string[];
-  sentiment_values: number[]; // For consistency calculation
+async function validateWeeklyCache(
+  cached: WeeklyAggregation,
+  currentWeekEpisodes: EpisodeInsight[]
+): Promise<boolean> {
+  // Check framework version matches current version
+  if (cached.framework_version !== CURRENT_FRAMEWORK_VERSION) {
+    console.log(`Cache invalid: framework version mismatch (cached: ${cached.framework_version}, current: ${CURRENT_FRAMEWORK_VERSION})`);
+    return false;
+  }
+
+  // Check that all episode IDs in cache are present in current week episodes
+  const currentEpisodeIds = new Set(currentWeekEpisodes.map(ep => ep.episode_id));
+  const cachedEpisodeIds = new Set(cached.episode_ids);
+
+  // If episode counts differ, cache is invalid
+  if (cachedEpisodeIds.size !== currentEpisodeIds.size) {
+    console.log(`Cache invalid: episode count mismatch (cached: ${cachedEpisodeIds.size}, current: ${currentEpisodeIds.size})`);
+    return false;
+  }
+
+  // Check all cached episode IDs exist in current episodes
+  for (const episodeId of cachedEpisodeIds) {
+    if (!currentEpisodeIds.has(episodeId)) {
+      console.log(`Cache invalid: episode ${episodeId} not found in current week`);
+      return false;
+    }
+  }
+
+  // Verify framework versions of all episodes match current version
+  const outdatedEpisodes = currentWeekEpisodes.filter(
+    ep => ep.framework_version !== CURRENT_FRAMEWORK_VERSION
+  );
+  if (outdatedEpisodes.length > 0) {
+    console.log(`Cache invalid: ${outdatedEpisodes.length} episode(s) have outdated framework versions`);
+    return false;
+  }
+
+  console.log(`Cache valid: all ${cachedEpisodeIds.size} episodes match current state`);
+  return true;
+}
+
+/**
+ * Converts a cached WeeklyAggregation back to a full HCRReport.
+ * Used when cache hit occurs to avoid recomputing the report.
+ */
+async function convertAggregationToReport(
+  cached: WeeklyAggregation,
+  weekStart: string,
+  weekEnd: string,
+  priorWeekStart: string,
+  priorWeekEnd: string
+): Promise<HCRReport> {
+  console.log(`Converting cached aggregation to HCRReport for ${weekStart}`);
+
+  // Retrieve episodes to populate sources_analyzed and evidence
+  const currentWeekEpisodes = await getEpisodesByDateRange(weekStart, weekEnd);
+  const priorWeekEpisodes = await getEpisodesByDateRange(priorWeekStart, priorWeekEnd);
+
+  // Build sources_analyzed array
+  const sourcesAnalyzed: AnalyzedSource[] = currentWeekEpisodes.map(ep => ({
+    episode_id: ep.episode_id,
+    show_name: ep.show_name,
+    title: ep.title,
+    published_at: ep.published_at,
+    input_types_present: ['transcript_summary']
+  }));
+
+  // Convert AggregatedIssues to IssueEntries with full evidence
+  const issueEntries: IssueEntry[] = [];
+  const gainingIssues: IssueMovement[] = [];
+  const losingIssues: IssueMovement[] = [];
+
+  // Rank current week issues to get proper structure
+  const currentWeekIssues = rankIssues(currentWeekEpisodes);
+  const priorWeekIssues = rankIssues(priorWeekEpisodes);
+
+  // Use top 5 issues from cache to build entries
+  const top5 = currentWeekIssues.slice(0, 5);
+  const { deltas } = computeDeltas(top5, priorWeekIssues);
+
+  deltas.forEach((delta, index) => {
+    const evidence = buildEvidenceArray(delta.issue, currentWeekEpisodes);
+    const sentimentIndex = Math.round(delta.issue.avg_sentiment);
+    const deltaValue = typeof delta.sentimentDelta === 'number'
+      ? Math.round(delta.sentimentDelta)
+      : "unknown";
+
+    const enhancedDescription = buildEnhancedDeltaDescription(
+      delta,
+      evidence,
+      currentWeekEpisodes
+    );
+
+    issueEntries.push({
+      issue_id: `issue-${index + 1}`,
+      issue_name: delta.issue.issue_name,
+      rank_this_week: index + 1,
+      sentiment_index: sentimentIndex,
+      sentiment_label: getSentimentLabel(sentimentIndex),
+      confidence: delta.issue.avg_confidence,
+      delta_vs_prior_week: deltaValue,
+      why_this_week: `Mentioned in ${delta.issue.episode_count} episode(s) with ${(delta.issue.avg_prominence * 100).toFixed(0)}% prominence.`,
+      what_changed_week_over_week: enhancedDescription,
+      evidence
+    });
+
+    // Track gaining/losing issues
+    if (delta.movement === "up" && typeof delta.sentimentDelta === 'number' && delta.sentimentDelta > 10) {
+      gainingIssues.push({
+        issue_name: delta.issue.issue_name,
+        movement: "up",
+        reason: `Sentiment improved by ${formatDelta(delta.sentimentDelta)} points.`,
+        supporting_evidence: evidence.slice(0, 3)
+      });
+    } else if (delta.movement === "down" && typeof delta.sentimentDelta === 'number' && delta.sentimentDelta < -10) {
+      losingIssues.push({
+        issue_name: delta.issue.issue_name,
+        movement: "down",
+        reason: `Sentiment declined by ${formatDelta(delta.sentimentDelta)} points.`,
+        supporting_evidence: evidence.slice(0, 3)
+      });
+    } else if (delta.movement === "new") {
+      gainingIssues.push({
+        issue_name: delta.issue.issue_name,
+        movement: "new",
+        reason: "New topic of focus this week.",
+        supporting_evidence: evidence.slice(0, 2)
+      });
+    }
+  });
+
+  // Detect narrative shifts
+  const narrativeShifts = detectNarrativeShifts(
+    top5,
+    priorWeekIssues,
+    currentWeekEpisodes
+  );
+
+  // Compute quality flags
+  const qualityFlags = computeQualityFlags(currentWeekEpisodes, currentWeekIssues);
+
+  // Generate placeholder executive summary
+  const executiveSummary = generatePlaceholderSummary(top5, currentWeekEpisodes);
+
+  return {
+    run_window: {
+      window_start: weekStart,
+      window_end: weekEnd,
+      timezone: 'America/New_York'
+    },
+    prior_window: {
+      window_start: priorWeekStart,
+      window_end: priorWeekEnd,
+      timezone: 'America/New_York'
+    },
+    generated_at: cached.computed_at, // Use original computation time
+    sources_analyzed: sourcesAnalyzed,
+    executive_summary: executiveSummary,
+    top_issues: issueEntries,
+    issues_gaining_importance: gainingIssues,
+    issues_losing_importance: losingIssues,
+    narrative_shifts: narrativeShifts,
+    evidence_gaps: [],
+    quality_flags: qualityFlags
+  };
+}
+
+/**
+ * Prunes old weekly aggregations, keeping only the most recent 52 weeks.
+ * Helps prevent unbounded storage growth.
+ */
+async function pruneOldWeeklyAggregations(): Promise<void> {
+  try {
+    const allAggregations = await getAllWeeklyAggregations();
+
+    // If we have 52 or fewer, no pruning needed
+    if (allAggregations.length <= 52) {
+      return;
+    }
+
+    // Sort by week_start descending (newest first)
+    const sorted = allAggregations.sort((a, b) =>
+      b.week_start.localeCompare(a.week_start)
+    );
+
+    // Keep first 52, delete the rest
+    const toDelete = sorted.slice(52);
+    console.log(`Pruning ${toDelete.length} old weekly aggregations (keeping most recent 52)`);
+
+    for (const aggregation of toDelete) {
+      await deleteWeeklyAggregation(aggregation.week_start);
+    }
+
+    console.log(`Successfully pruned ${toDelete.length} old weekly aggregations`);
+  } catch (error) {
+    console.error('Error pruning old weekly aggregations:', error);
+    // Non-fatal error, continue execution
+  }
 }
 
 /**
  * Composes a weekly report from episode insights without calling AI.
  * Aggregates topics across episodes, ranks by importance, and calculates deltas.
+ * Uses caching to speed up re-runs and multi-week analysis.
  *
  * @param weekStart - Start of current week (YYYY-MM-DD, Sunday)
  * @param weekEnd - End of current week (YYYY-MM-DD, Saturday)
@@ -46,6 +251,35 @@ export async function composeWeeklyReport(
   console.log(`Composing weekly report for ${weekStart} to ${weekEnd}`);
 
   try {
+    // Check if we have a cached weekly aggregation
+    const cachedAggregation = await getWeeklyAggregation(weekStart);
+
+    if (cachedAggregation) {
+      console.log(`Found cached weekly aggregation for ${weekStart}`);
+
+      // Query current week episodes to validate cache
+      const currentWeekEpisodes = await getEpisodesByDateRange(weekStart, weekEnd);
+
+      // Validate cache is still valid
+      const isCacheValid = await validateWeeklyCache(cachedAggregation, currentWeekEpisodes);
+
+      if (isCacheValid) {
+        console.log(`✓ Using cached weekly aggregation for ${weekStart} (cache hit)`);
+        return await convertAggregationToReport(
+          cachedAggregation,
+          weekStart,
+          weekEnd,
+          priorWeekStart,
+          priorWeekEnd
+        );
+      } else {
+        console.log(`✗ Cache invalid for ${weekStart}, recomputing...`);
+      }
+    }
+
+    // Cache miss or invalid - compute fresh report
+    console.log(`Computing fresh weekly report for ${weekStart} (cache miss)`);
+
     // Query episodes from IndexedDB
     const currentWeekEpisodes = await getEpisodesByDateRange(weekStart, weekEnd);
     const priorWeekEpisodes = await getEpisodesByDateRange(priorWeekStart, priorWeekEnd);
@@ -56,18 +290,19 @@ export async function composeWeeklyReport(
     );
 
     // Aggregate topics into ranked issues
-    const currentWeekIssues = aggregateTopIssues(currentWeekEpisodes);
-    const priorWeekIssues = aggregateTopIssues(priorWeekEpisodes);
+    const currentWeekIssues = rankIssues(currentWeekEpisodes);
+    const priorWeekIssues = rankIssues(priorWeekEpisodes);
 
     // Select top 5 issues
     const top5 = currentWeekIssues.slice(0, 5);
 
     // Compute deltas and movements
-    const { issueEntries, gainingIssues, losingIssues } = computeDeltas(
-      top5,
-      priorWeekIssues,
-      currentWeekEpisodes
-    );
+    const { deltas, dropped } = computeDeltas(top5, priorWeekIssues);
+    const {
+      issueEntries,
+      gainingIssues,
+      losingIssues
+    } = buildIssueEntriesFromDeltas(deltas, dropped, currentWeekEpisodes);
 
     // Detect narrative shifts
     const narrativeShifts = detectNarrativeShifts(
@@ -114,6 +349,35 @@ export async function composeWeeklyReport(
       quality_flags: qualityFlags
     };
 
+    // Cache the weekly aggregation for future re-runs
+    try {
+      const aggregatedIssues: AggregatedIssue[] = top5.map(issue => ({
+        issue_name: issue.issue_name,
+        avg_sentiment: issue.avg_sentiment,
+        confidence: issue.avg_confidence,
+        episode_count: issue.episode_count,
+        evidence: buildEvidenceArray(issue, currentWeekEpisodes)
+      }));
+
+      const weeklyAggregation: WeeklyAggregation = {
+        week_start: weekStart,
+        week_end: weekEnd,
+        episode_ids: currentWeekEpisodes.map(ep => ep.episode_id),
+        top_issues: aggregatedIssues,
+        computed_at: report.generated_at,
+        framework_version: CURRENT_FRAMEWORK_VERSION
+      };
+
+      await saveWeeklyAggregation(weeklyAggregation);
+      console.log(`✓ Cached weekly aggregation for ${weekStart}`);
+
+      // Prune old aggregations to prevent unbounded growth
+      await pruneOldWeeklyAggregations();
+    } catch (cacheError) {
+      // Non-fatal: log error but continue
+      console.error('Failed to cache weekly aggregation:', cacheError);
+    }
+
     return report;
   } catch (error) {
     console.error('Error composing weekly report:', error);
@@ -122,105 +386,11 @@ export async function composeWeeklyReport(
 }
 
 /**
- * Aggregates topics across episodes and ranks them by importance.
- * Ranking formula: (episode_count × 0.4) + (avg_prominence × 0.35) + (consistency × 0.25)
- *
- * @param episodes - Array of episode insights
- * @returns Ranked array of aggregated issues
+ * Builds issue entries and movement arrays from delta results.
  */
-function aggregateTopIssues(episodes: EpisodeInsight[]): RankedIssue[] {
-  if (episodes.length === 0) {
-    return [];
-  }
-
-  // Map to collect all topic mentions
-  const issueMap = new Map<string, {
-    sentiments: number[];
-    confidences: number[];
-    prominences: number[];
-    quotes: string[];
-    episodeIds: Set<string>;
-  }>();
-
-  // Collect all mentions across episodes
-  for (const episode of episodes) {
-    for (const topic of episode.topics) {
-      const normalizedName = normalizeTopic(topic.topic_name);
-
-      if (!issueMap.has(normalizedName)) {
-        issueMap.set(normalizedName, {
-          sentiments: [],
-          confidences: [],
-          prominences: [],
-          quotes: [],
-          episodeIds: new Set()
-        });
-      }
-
-      const issue = issueMap.get(normalizedName)!;
-      issue.sentiments.push(topic.sentiment_score);
-      issue.confidences.push(topic.confidence);
-      issue.prominences.push(topic.prominence_score);
-      issue.quotes.push(...topic.evidence_quotes);
-      issue.episodeIds.add(episode.episode_id);
-    }
-  }
-
-  // Calculate maximum episode count for normalization
-  const maxEpisodeCount = Math.max(...Array.from(issueMap.values()).map(v => v.episodeIds.size));
-
-  // Rank issues by importance
-  const rankedIssues = Array.from(issueMap.entries())
-    .map(([normalizedName, data]): RankedIssue => {
-      const avgSentiment = mean(data.sentiments);
-      const avgConfidence = mean(data.confidences);
-      const avgProminence = mean(data.prominences);
-      const episodeCount = data.episodeIds.size;
-
-      // Calculate consistency (1 - normalized_std_dev)
-      const sentimentConsistency = 1 - (standardDeviation(data.sentiments) / 50);
-      const consistency = Math.max(0, Math.min(1, sentimentConsistency));
-
-      // Normalized frequency score
-      const frequencyScore = episodeCount / maxEpisodeCount;
-
-      // Ranking formula
-      const rankScore =
-        frequencyScore * 0.40 +
-        avgProminence * 0.35 +
-        consistency * 0.25;
-
-      return {
-        issue_name: normalizedName,
-        normalized_name: normalizedName,
-        avg_sentiment: avgSentiment,
-        avg_confidence: avgConfidence,
-        avg_prominence: avgProminence,
-        episode_count: episodeCount,
-        rank_score: rankScore,
-        evidence_quotes: data.quotes.slice(0, 10), // Limit to top 10 quotes
-        episode_ids: Array.from(data.episodeIds),
-        sentiment_values: data.sentiments
-      };
-    })
-    .filter(issue => {
-      // Apply minimum thresholds
-      // For single episode weeks, lower the threshold
-      const minEpisodes = episodes.length === 1 ? 1 : 1;
-      return issue.episode_count >= minEpisodes && issue.avg_prominence > 0.2;
-    })
-    .sort((a, b) => b.rank_score - a.rank_score);
-
-  return rankedIssues;
-}
-
-/**
- * Computes deltas between current and prior week issues.
- * Returns issue entries with sentiment changes and movement indicators.
- */
-function computeDeltas(
-  currentWeekIssues: RankedIssue[],
-  priorWeekIssues: RankedIssue[],
+function buildIssueEntriesFromDeltas(
+  deltas: DeltaResult[],
+  droppedIssues: RankedIssue[],
   currentWeekEpisodes: EpisodeInsight[]
 ): {
   issueEntries: IssueEntry[];
@@ -231,91 +401,234 @@ function computeDeltas(
   const gainingIssues: IssueMovement[] = [];
   const losingIssues: IssueMovement[] = [];
 
-  // Create lookup map for prior week issues
-  const priorMap = new Map(
-    priorWeekIssues.map(issue => [issue.normalized_name, issue])
-  );
+  deltas.forEach((delta, index) => {
+    const evidence = buildEvidenceArray(delta.issue, currentWeekEpisodes);
+    const sentimentIndex = Math.round(delta.issue.avg_sentiment);
+    const deltaValue = typeof delta.sentimentDelta === 'number'
+      ? Math.round(delta.sentimentDelta)
+      : "unknown";
 
-  currentWeekIssues.forEach((issue, index) => {
-    const priorIssue = priorMap.get(issue.normalized_name);
-    const rank = index + 1;
-
-    let delta: number | "unknown" = "unknown";
-    let whatChanged = "New topic of focus this week.";
-    let movement: "up" | "down" | "new" | "unchanged" = "new";
-
-    if (priorIssue) {
-      delta = issue.avg_sentiment - priorIssue.avg_sentiment;
-      const absDelta = Math.abs(delta);
-
-      if (absDelta < 5) {
-        movement = "unchanged";
-        whatChanged = `Sentiment remained stable (${formatDelta(delta)} points).`;
-      } else if (delta > 0) {
-        movement = "up";
-        whatChanged = `Sentiment improved by ${formatDelta(delta)} points compared to prior week.`;
-      } else {
-        movement = "down";
-        whatChanged = `Sentiment declined by ${formatDelta(delta)} points compared to prior week.`;
-      }
-    }
-
-    // Build evidence array
-    const evidence: Evidence[] = buildEvidenceArray(
-      issue,
+    // Generate evidence-based description
+    const enhancedDescription = buildEnhancedDeltaDescription(
+      delta,
+      evidence,
       currentWeekEpisodes
     );
 
-    // Create issue entry
     const issueEntry: IssueEntry = {
-      issue_id: `issue-${rank}`,
-      issue_name: issue.issue_name,
-      rank_this_week: rank,
-      sentiment_index: Math.round(issue.avg_sentiment),
-      sentiment_label: getSentimentLabel(issue.avg_sentiment),
-      confidence: issue.avg_confidence,
-      delta_vs_prior_week: delta,
-      why_this_week: `Mentioned in ${issue.episode_count} episode(s) with ${(issue.avg_prominence * 100).toFixed(0)}% prominence.`,
-      what_changed_week_over_week: whatChanged,
-      evidence: evidence
+      issue_id: `issue-${index + 1}`,
+      issue_name: delta.issue.issue_name,
+      rank_this_week: index + 1,
+      sentiment_index: sentimentIndex,
+      sentiment_label: getSentimentLabel(sentimentIndex),
+      confidence: delta.issue.avg_confidence,
+      delta_vs_prior_week: deltaValue,
+      why_this_week: `Mentioned in ${delta.issue.episode_count} episode(s) with ${(delta.issue.avg_prominence * 100).toFixed(0)}% prominence.`,
+      what_changed_week_over_week: enhancedDescription,
+      evidence
     };
 
     issueEntries.push(issueEntry);
 
-    // Track gaining/losing issues
-    if (priorIssue && typeof delta === 'number') {
-      if (delta > 10) {
-        gainingIssues.push({
-          issue_name: issue.issue_name,
-          movement: "up",
-          reason: `Sentiment improved by ${formatDelta(delta)} points.`,
-          supporting_evidence: evidence.slice(0, 3)
-        });
-      } else if (delta < -10) {
-        losingIssues.push({
-          issue_name: issue.issue_name,
-          movement: "down",
-          reason: `Sentiment declined by ${formatDelta(delta)} points.`,
-          supporting_evidence: evidence.slice(0, 3)
-        });
-      }
-    }
-  });
-
-  // Identify dropped issues (in prior week top 5 but not current)
-  const currentNames = new Set(currentWeekIssues.map(i => i.normalized_name));
-  priorWeekIssues.slice(0, 5).forEach(priorIssue => {
-    if (!currentNames.has(priorIssue.normalized_name)) {
+    if (delta.movement === "up" && typeof delta.sentimentDelta === 'number' && delta.sentimentDelta > 10) {
+      gainingIssues.push({
+        issue_name: delta.issue.issue_name,
+        movement: "up",
+        reason: `Sentiment improved by ${formatDelta(delta.sentimentDelta)} points.`,
+        supporting_evidence: evidence.slice(0, 3)
+      });
+    } else if (delta.movement === "down" && typeof delta.sentimentDelta === 'number' && delta.sentimentDelta < -10) {
       losingIssues.push({
-        issue_name: priorIssue.issue_name,
-        movement: "dropped",
-        reason: "Dropped out of top 5 issues this week.",
-        supporting_evidence: []
+        issue_name: delta.issue.issue_name,
+        movement: "down",
+        reason: `Sentiment declined by ${formatDelta(delta.sentimentDelta)} points.`,
+        supporting_evidence: evidence.slice(0, 3)
+      });
+    } else if (delta.movement === "new") {
+      gainingIssues.push({
+        issue_name: delta.issue.issue_name,
+        movement: "new",
+        reason: "New topic of focus this week.",
+        supporting_evidence: evidence.slice(0, 2)
       });
     }
   });
 
+  droppedIssues.forEach(issue => {
+    losingIssues.push({
+      issue_name: issue.issue_name,
+      movement: "dropped",
+      reason: "Dropped out of top 5 issues this week.",
+      supporting_evidence: []
+    });
+  });
+
   return { issueEntries, gainingIssues, losingIssues };
+}
+
+/**
+ * Builds enhanced delta description using evidence analysis.
+ * Generates more informative descriptions by analyzing evidence quotes.
+ */
+function buildEnhancedDeltaDescription(
+  delta: DeltaResult,
+  evidence: Evidence[],
+  episodes: EpisodeInsight[]
+): string {
+  const { issue, priorIssue, sentimentDelta, prominenceDelta, movement } = delta;
+
+  // Extract key themes from evidence
+  const themes = extractKeyThemesFromEvidence(evidence, issue.issue_name);
+
+  // Build context-aware description based on movement type
+  if (movement === "new") {
+    if (themes.length > 0) {
+      return `${issue.issue_name} emerged as a new focus this week following ${themes[0].toLowerCase()}.`;
+    }
+    return `${issue.issue_name} emerged as a new focus this week with ${issue.episode_count} episode(s) covering this topic.`;
+  }
+
+  if (movement === "unchanged") {
+    if (themes.length > 0) {
+      return `${issue.issue_name} maintained steady coverage this week, with continued discussion of ${themes[0].toLowerCase()}.`;
+    }
+    return `${issue.issue_name} held steady week over week (Δ ${formatDelta(sentimentDelta as number)} pts sentiment).`;
+  }
+
+  // For "up" or "down" movements, analyze sentiment direction
+  const isPositive = typeof sentimentDelta === 'number' && sentimentDelta > 0;
+  const isNegative = typeof sentimentDelta === 'number' && sentimentDelta < 0;
+  const magnitude = typeof sentimentDelta === 'number' ? Math.abs(sentimentDelta) : 0;
+
+  if (movement === "up") {
+    if (magnitude > 20 && themes.length > 0) {
+      return `${issue.issue_name} sentiment improved significantly (+${magnitude} pts) amid ${themes[0].toLowerCase()}.`;
+    } else if (themes.length > 0) {
+      return `${issue.issue_name} gained momentum (+${magnitude} pts) with focus on ${themes[0].toLowerCase()}.`;
+    }
+    return `${issue.issue_name} gained momentum (Δ ${formatDelta(sentimentDelta as number)} pts sentiment, ${formatDelta((prominenceDelta as number) * 100)} pts prominence).`;
+  }
+
+  if (movement === "down") {
+    if (magnitude > 20 && themes.length > 0) {
+      return `${issue.issue_name} sentiment declined significantly (-${magnitude} pts) amid concerns about ${themes[0].toLowerCase()}.`;
+    } else if (themes.length > 0) {
+      return `${issue.issue_name} lost momentum (-${magnitude} pts) with continued attention to ${themes[0].toLowerCase()}.`;
+    }
+    return `${issue.issue_name} lost momentum (Δ ${formatDelta(sentimentDelta as number)} pts sentiment, ${formatDelta((prominenceDelta as number) * 100)} pts prominence).`;
+  }
+
+  // Fallback to basic description
+  return delta.description;
+}
+
+/**
+ * Extracts key themes and events from evidence quotes.
+ * Analyzes quote text to identify specific developments, events, or concerns.
+ */
+function extractKeyThemesFromEvidence(
+  evidence: Evidence[],
+  issueName: string
+): string[] {
+  if (evidence.length === 0) return [];
+
+  const themes: string[] = [];
+  const evidenceTexts = evidence.map(e => e.evidence_text).filter(Boolean);
+
+  // Common patterns to extract key themes
+  const patterns = [
+    // Developments and events
+    /(?:following|after|due to|amid|regarding)\s+(.{20,80}?)(?:\.|,|;|$)/gi,
+    /(?:developments?|events?|announcements?|decisions?|actions?)\s+(?:on|about|regarding)\s+(.{20,80}?)(?:\.|,|;|$)/gi,
+
+    // Concerns and criticism
+    /concerns?\s+(?:about|over|regarding)\s+(.{20,80}?)(?:\.|,|;|$)/gi,
+    /criticism\s+(?:of|about|over)\s+(.{20,80}?)(?:\.|,|;|$)/gi,
+
+    // Specific actions
+    /(?:announced|proposed|introduced|passed|signed|blocked|rejected)\s+(.{20,80}?)(?:\.|,|;|$)/gi,
+
+    // Focus areas
+    /(?:focus|attention|emphasis)\s+on\s+(.{20,80}?)(?:\.|,|;|$)/gi,
+  ];
+
+  // Try to extract themes from all evidence
+  for (const text of evidenceTexts.slice(0, 5)) {
+    for (const pattern of patterns) {
+      const matches = Array.from(text.matchAll(pattern));
+      for (const match of matches.slice(0, 2)) {
+        if (match[1] && match[1].trim().length > 10) {
+          const theme = cleanThemeText(match[1].trim());
+          if (theme && !themes.includes(theme)) {
+            themes.push(theme);
+            if (themes.length >= 3) break;
+          }
+        }
+      }
+      if (themes.length >= 3) break;
+    }
+    if (themes.length >= 3) break;
+  }
+
+  // If no specific themes found, try to extract key phrases
+  if (themes.length === 0) {
+    const keyPhrases = extractKeyPhrases(evidenceTexts.slice(0, 3));
+    themes.push(...keyPhrases.slice(0, 2));
+  }
+
+  return themes;
+}
+
+/**
+ * Extracts key phrases from evidence text when pattern matching fails.
+ */
+function extractKeyPhrases(texts: string[]): string[] {
+  const phrases: string[] = [];
+
+  for (const text of texts) {
+    // Look for noun phrases (simplified extraction)
+    const sentences = text.split(/[.!?]+/).filter(s => s.trim().length > 20);
+    for (const sentence of sentences.slice(0, 2)) {
+      // Extract phrases between commas or before periods
+      const parts = sentence.split(/[,;]/).map(p => p.trim());
+      for (const part of parts) {
+        if (part.length > 30 && part.length < 100) {
+          const cleaned = cleanThemeText(part);
+          if (cleaned && !phrases.includes(cleaned)) {
+            phrases.push(cleaned);
+            if (phrases.length >= 2) return phrases;
+          }
+        }
+      }
+    }
+  }
+
+  return phrases;
+}
+
+/**
+ * Cleans and normalizes theme text for readability.
+ */
+function cleanThemeText(text: string): string {
+  // Remove leading articles and pronouns
+  let cleaned = text
+    .replace(/^(the|a|an|this|that|these|those|he|she|it|they)\s+/i, '')
+    .trim();
+
+  // Remove trailing punctuation except periods in abbreviations
+  cleaned = cleaned.replace(/[,;:]$/, '').trim();
+
+  // Ensure it doesn't end mid-word
+  if (cleaned.endsWith(' the') || cleaned.endsWith(' a') || cleaned.endsWith(' an')) {
+    cleaned = cleaned.replace(/\s+(the|a|an)$/i, '');
+  }
+
+  // Ensure reasonable length
+  if (cleaned.length < 15 || cleaned.length > 120) {
+    return '';
+  }
+
+  return cleaned;
 }
 
 /**
@@ -496,50 +809,11 @@ function buildEvidenceArray(
 // ===== Utility Functions =====
 
 /**
- * Normalizes topic names to handle variations
- * Examples: "Jan 6" → "january 6 investigation", "DOJ" → "department of justice"
- */
-function normalizeTopic(topicName: string): string {
-  let normalized = topicName.toLowerCase().trim();
-
-  // Common normalizations
-  const replacements: Record<string, string> = {
-    'jan 6': 'january 6',
-    'jan. 6': 'january 6',
-    'january sixth': 'january 6',
-    'doj': 'department of justice',
-    'scotus': 'supreme court',
-    'potus': 'president',
-    'gop': 'republican party',
-    'dems': 'democratic party',
-  };
-
-  for (const [pattern, replacement] of Object.entries(replacements)) {
-    if (normalized.includes(pattern)) {
-      normalized = normalized.replace(pattern, replacement);
-    }
-  }
-
-  return normalized;
-}
-
-/**
  * Calculates mean of number array
  */
 function mean(values: number[]): number {
   if (values.length === 0) return 0;
   return values.reduce((sum, val) => sum + val, 0) / values.length;
-}
-
-/**
- * Calculates standard deviation of number array
- */
-function standardDeviation(values: number[]): number {
-  if (values.length === 0) return 0;
-  const avg = mean(values);
-  const squareDiffs = values.map(value => Math.pow(value - avg, 2));
-  const avgSquareDiff = mean(squareDiffs);
-  return Math.sqrt(avgSquareDiff);
 }
 
 /**

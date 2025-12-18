@@ -1,8 +1,8 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { UploadCloud, FileJson, Calendar, Sparkles, AlertCircle, Loader2, Database, Check, X } from 'lucide-react';
+import { UploadCloud, FileJson, Sparkles, AlertCircle, Loader2, Database, Check, X, XCircle } from 'lucide-react';
 import { HCRReport } from '../types';
-import { generateReport } from '../services/gemini';
-import { storageService } from '../services/storage';
+import { processEpisodesInRange, estimateProcessingTime } from '../services/episodeProcessor';
+import { composeWeeklyReport } from '../services/reportComposer';
 import { getWeekWindows, aggregateReports } from '../utils/reportUtils';
 import { migrateWeeklyReportsToEpisodes, isMigrationNeeded, getMigrationStats } from '../utils/migration';
 
@@ -11,8 +11,18 @@ interface Props {
   onUseDemo: () => void;
 }
 
+type ProgressPhase = 'idle' | 'discovering' | 'analyzing' | 'composing' | 'cancelled';
+
+interface ProgressState {
+  phase: ProgressPhase;
+  current: number;
+  total: number;
+  currentItem: string;
+}
+
 export const DashboardSetup: React.FC<Props> = ({ onDataLoaded, onUseDemo }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   
@@ -26,7 +36,19 @@ export const DashboardSetup: React.FC<Props> = ({ onDataLoaded, onUseDemo }) => 
   
   // Generation State
   const [isGenerating, setIsGenerating] = useState(false);
-  const [progress, setProgress] = useState("");
+  const [isCancelling, setIsCancelling] = useState(false);
+  const [progress, setProgress] = useState<ProgressState>({
+    phase: 'idle',
+    current: 0,
+    total: 0,
+    currentItem: ''
+  });
+  const [episodeStats, setEpisodeStats] = useState<{
+    total: number;
+    cached: number;
+    newCount: number;
+    estimateSeconds: number;
+  } | null>(null);
 
   // Migration State
   const [isMigrating, setIsMigrating] = useState(false);
@@ -122,54 +144,145 @@ export const DashboardSetup: React.FC<Props> = ({ onDataLoaded, onUseDemo }) => 
       return;
     }
 
+    const windows = getWeekWindows(startDate, endDate);
+    if (windows.length === 0) {
+      setError("Invalid date range. Please select at least one week.");
+      return;
+    }
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     setIsGenerating(true);
-    setProgress("Calculating windows...");
+    setIsCancelling(false);
+    setEpisodeStats(null);
+    setProgress({
+      phase: 'discovering',
+      current: 0,
+      total: 1,
+      currentItem: "Discovering episodes..."
+    });
 
     try {
-      // Pass strings directly to handle local timezone correctly
-      const windows = getWeekWindows(startDate, endDate);
-      if (windows.length === 0) {
-        throw new Error("Invalid date range. Please select at least one week.");
+      const concurrency = 10;
+
+      const processResult = await processEpisodesInRange(startDate, endDate, {
+        concurrency,
+        signal: controller.signal,
+        onDiscoveryComplete: (total, cached, newCount) => {
+          if (controller.signal.aborted) return;
+
+          const estimateSeconds = estimateProcessingTime(total, cached, concurrency);
+          setEpisodeStats({ total, cached, newCount, estimateSeconds });
+          setProgress({
+            phase: 'analyzing',
+            current: 0,
+            total: Math.max(total, 1),
+            currentItem: total === 0
+              ? "No episodes found in this range."
+              : `Preparing to analyze ${newCount} new episode${newCount === 1 ? '' : 's'} (${cached} cached)`
+          });
+        },
+        onProgress: (completed, total, episodeTitle, isCached) => {
+          if (controller.signal.aborted) return;
+
+          const label = isCached ? 'Loading cached episode' : 'Analyzing episode';
+          setProgress({
+            phase: 'analyzing',
+            current: completed,
+            total: Math.max(total, 1),
+            currentItem: `${label} ${completed}/${total}: "${episodeTitle}"`
+          });
+        }
+      });
+
+      if (controller.signal.aborted) {
+        throw new Error('Processing cancelled');
+      }
+
+      if (processResult.stats.totalEpisodes === 0) {
+        setError("No episodes found in the selected date range.");
+        return;
       }
 
       const reports: HCRReport[] = [];
-      
+      setProgress({
+        phase: 'composing',
+        current: 0,
+        total: windows.length,
+        currentItem: 'Composing weekly reports...'
+      });
+
       for (let i = 0; i < windows.length; i++) {
-        const w = windows[i];
-        
-        // Check cache first
-        const cached = storageService.getWeek(w.start);
-        if (cached) {
-          setProgress(`Loading cached Week ${i + 1} of ${windows.length}: ${w.start}...`);
-          // Small delay for UI smoothness
-          await new Promise(r => setTimeout(r, 300));
-          reports.push(cached);
-          continue;
+        if (controller.signal.aborted) {
+          throw new Error('Processing cancelled');
         }
 
-        setProgress(`Analyzing Week ${i + 1} of ${windows.length}: ${w.start} to ${w.end}...`);
-        
-        // Add artificial delay to avoid rate limits if any, though not strictly needed for basic usage
-        if (i > 0) await new Promise(r => setTimeout(r, 1000));
-        
-        const report = await generateReport(w.start, w.end, w.priorStart, w.priorEnd);
-        
-        // Save to cache
-        storageService.saveWeek(w.start, report);
-        
+        const w = windows[i];
+        const report = await composeWeeklyReport(w.start, w.end, w.priorStart, w.priorEnd);
         reports.push(report);
+
+        setProgress({
+          phase: 'composing',
+          current: i + 1,
+          total: windows.length,
+          currentItem: `Composing ${w.start} -> ${w.end}`
+        });
       }
 
-      setProgress("Aggregating results...");
       const finalReport = aggregateReports(reports);
       onDataLoaded(finalReport);
 
     } catch (err: any) {
       console.error(err);
-      setError(err.message || "Failed to generate report. Please try again.");
+      if (err?.message === 'Processing cancelled') {
+        setError("Analysis cancelled.");
+        setProgress({
+          phase: 'cancelled',
+          current: 0,
+          total: 0,
+          currentItem: ''
+        });
+      } else {
+        setError(err?.message || "Failed to generate report. Please try again.");
+      }
     } finally {
+      abortControllerRef.current = null;
       setIsGenerating(false);
-      setProgress("");
+      setIsCancelling(false);
+      setProgress({
+        phase: 'idle',
+        current: 0,
+        total: 0,
+        currentItem: ''
+      });
+    }
+  };
+
+  const handleCancel = () => {
+    if (!abortControllerRef.current) return;
+    setIsCancelling(true);
+    abortControllerRef.current.abort();
+  };
+
+  const progressPercent = progress.total > 0
+    ? Math.min(100, Math.round((progress.current / progress.total) * 100))
+    : progress.phase === 'discovering'
+      ? 15
+      : 0;
+
+  const progressLabel = () => {
+    switch (progress.phase) {
+      case 'discovering':
+        return 'Discovering Episodes';
+      case 'analyzing':
+        return 'Analyzing Episodes';
+      case 'composing':
+        return 'Composing Weekly Reports';
+      case 'cancelled':
+        return 'Cancelled';
+      default:
+        return 'Processing';
     }
   };
 
@@ -220,6 +333,50 @@ export const DashboardSetup: React.FC<Props> = ({ onDataLoaded, onUseDemo }) => 
                 <span>{error}</span>
               </div>
             )}
+
+            {isGenerating && (
+              <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 space-y-3 mt-4">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="font-medium text-slate-900">{progressLabel()}</span>
+                  <span className="text-slate-500">
+                    {progress.total > 0 ? `${progress.current}/${progress.total}` : '...'}
+                  </span>
+                </div>
+
+                <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
+                  <div
+                    className={`h-2 rounded-full transition-all duration-200 ${progress.phase === 'composing' ? 'bg-emerald-500' : 'bg-indigo-600'}`}
+                    style={{ width: `${progressPercent}%` }}
+                  />
+                </div>
+
+                <p className="text-xs text-slate-600 line-clamp-2">
+                  {progress.currentItem || 'Working...'}
+                </p>
+
+                {episodeStats && (
+                  <div className="flex items-center justify-between text-[11px] text-slate-500">
+                    <span>
+                      {episodeStats.cached} cached · {episodeStats.newCount} new
+                    </span>
+                    <span>
+                      Estimated time: ~{episodeStats.estimateSeconds}s
+                    </span>
+                  </div>
+                )}
+
+                <div className="flex justify-end">
+                  <button
+                    onClick={handleCancel}
+                    disabled={isCancelling}
+                    className="text-sm text-rose-600 border border-rose-200 bg-white px-3 py-1.5 rounded-md hover:bg-rose-50 transition-colors flex items-center gap-2 disabled:opacity-60"
+                  >
+                    <XCircle className="w-4 h-4" />
+                    {isCancelling ? 'Cancelling...' : 'Cancel'}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="mt-8">
@@ -231,7 +388,11 @@ export const DashboardSetup: React.FC<Props> = ({ onDataLoaded, onUseDemo }) => 
               {isGenerating ? (
                 <>
                   <Loader2 className="w-5 h-5 animate-spin" />
-                  {progress || "Processing..."}
+                  {progress.phase === 'discovering'
+                    ? "Discovering episodes..."
+                    : progress.phase === 'composing'
+                      ? "Composing report..."
+                      : "Analyzing episodes..."}
                 </>
               ) : (
                 <>
