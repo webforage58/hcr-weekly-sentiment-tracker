@@ -1,11 +1,12 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { UploadCloud, FileJson, Sparkles, AlertCircle, Loader2, Database, Check, X, XCircle } from 'lucide-react';
+import { UploadCloud, FileJson, Sparkles, AlertCircle, Loader2, Database, Check, X, XCircle, Settings, ChevronDown, ChevronUp } from 'lucide-react';
 import { HCRReport } from '../types';
 import { processEpisodesInRange, estimateProcessingTime } from '../services/episodeProcessor';
 import { composeWeeklyReport } from '../services/reportComposer';
 import { getWeekWindows, aggregateReports } from '../utils/reportUtils';
 import { migrateWeeklyReportsToEpisodes, isMigrationNeeded, getMigrationStats } from '../utils/migration';
 import { FRAMEWORK_VERSION } from '../constants/frameworkVersion';
+import { getConfig, updateConfig, resetConfig, type AppConfig } from '../constants/config';
 
 interface Props {
   onDataLoaded: (data: HCRReport) => void;
@@ -57,6 +58,10 @@ export const DashboardSetup: React.FC<Props> = ({ onDataLoaded, onUseDemo }) => 
   const [migrationError, setMigrationError] = useState<string | null>(null);
   const [showMigration, setShowMigration] = useState(false);
   const [migrationStats, setMigrationStats] = useState({ weeksInLocalStorage: 0, totalEpisodes: 0 });
+
+  // Settings State
+  const [showSettings, setShowSettings] = useState(false);
+  const [config, setConfig] = useState<AppConfig>(getConfig());
 
   // Check if migration is needed on mount
   useEffect(() => {
@@ -564,6 +569,137 @@ export const DashboardSetup: React.FC<Props> = ({ onDataLoaded, onUseDemo }) => 
           </div>
         </div>
       )}
+
+      {/* Settings Panel */}
+      <div className="max-w-4xl w-full mt-8">
+        <div className="bg-white rounded-xl shadow-lg border border-slate-200 overflow-hidden">
+          <button
+            onClick={() => setShowSettings(!showSettings)}
+            className="w-full px-6 py-4 flex items-center justify-between hover:bg-slate-50 transition-colors"
+          >
+            <div className="flex items-center gap-3">
+              <Settings className="w-5 h-5 text-slate-600" />
+              <h3 className="text-lg font-semibold text-slate-900">Advanced Settings</h3>
+            </div>
+            {showSettings ? (
+              <ChevronUp className="w-5 h-5 text-slate-400" />
+            ) : (
+              <ChevronDown className="w-5 h-5 text-slate-400" />
+            )}
+          </button>
+
+          {showSettings && (
+            <div className="px-6 py-4 border-t border-slate-200 space-y-6">
+              {/* Processing Settings */}
+              <div>
+                <h4 className="font-semibold text-slate-900 mb-3">Processing</h4>
+                <div className="space-y-4">
+                  <div>
+                    <label className="flex items-center justify-between text-sm font-medium text-slate-700 mb-2">
+                      <span>Parallel Episodes (Concurrency)</span>
+                      <span className="text-indigo-600 font-semibold">{config.processing.concurrency}</span>
+                    </label>
+                    <input
+                      type="range"
+                      min="1"
+                      max="20"
+                      value={config.processing.concurrency}
+                      onChange={(e) => {
+                        const newValue = parseInt(e.target.value);
+                        const newConfig = updateConfig('processing', 'concurrency', newValue);
+                        setConfig(newConfig);
+                      }}
+                      className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer"
+                    />
+                    <p className="text-xs text-slate-500 mt-1">
+                      Higher values = faster processing (uses more API quota)
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Feature Toggles */}
+              <div>
+                <h4 className="font-semibold text-slate-900 mb-3">Features</h4>
+                <div className="space-y-3">
+                  <label className="flex items-center justify-between p-3 bg-slate-50 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer">
+                    <div className="flex-1">
+                      <span className="text-sm font-medium text-slate-900">AI Executive Summaries</span>
+                      <p className="text-xs text-slate-600 mt-0.5">
+                        Generate detailed narrative summaries using AI (slower, +2-3s per week)
+                      </p>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={config.features.enableAIExecutiveSummary}
+                      onChange={(e) => {
+                        const newConfig = updateConfig('features', 'enableAIExecutiveSummary', e.target.checked);
+                        setConfig(newConfig);
+                      }}
+                      className="ml-3 w-5 h-5 text-indigo-600 rounded focus:ring-indigo-500"
+                    />
+                  </label>
+
+                  <label className="flex items-center justify-between p-3 bg-slate-50 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer">
+                    <div className="flex-1">
+                      <span className="text-sm font-medium text-slate-900">Detailed Progress</span>
+                      <p className="text-xs text-slate-600 mt-0.5">
+                        Show episode-by-episode progress during analysis
+                      </p>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={config.features.enableDetailedProgress}
+                      onChange={(e) => {
+                        const newConfig = updateConfig('features', 'enableDetailedProgress', e.target.checked);
+                        setConfig(newConfig);
+                      }}
+                      className="ml-3 w-5 h-5 text-indigo-600 rounded focus:ring-indigo-500"
+                    />
+                  </label>
+                </div>
+              </div>
+
+              {/* Caching Settings */}
+              <div>
+                <h4 className="font-semibold text-slate-900 mb-3">Caching</h4>
+                <div className="space-y-3">
+                  <label className="flex items-center justify-between p-3 bg-slate-50 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer">
+                    <div className="flex-1">
+                      <span className="text-sm font-medium text-slate-900">Weekly Aggregation Cache</span>
+                      <p className="text-xs text-slate-600 mt-0.5">
+                        Cache computed weekly reports for faster re-runs
+                      </p>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={config.caching.enableWeeklyAggregationCache}
+                      onChange={(e) => {
+                        const newConfig = updateConfig('caching', 'enableWeeklyAggregationCache', e.target.checked);
+                        setConfig(newConfig);
+                      }}
+                      className="ml-3 w-5 h-5 text-indigo-600 rounded focus:ring-indigo-500"
+                    />
+                  </label>
+                </div>
+              </div>
+
+              {/* Reset Button */}
+              <div className="pt-4 border-t border-slate-200">
+                <button
+                  onClick={() => {
+                    const defaultConfig = resetConfig();
+                    setConfig(defaultConfig);
+                  }}
+                  className="px-4 py-2 text-sm font-medium text-slate-700 bg-slate-100 rounded-lg hover:bg-slate-200 transition-colors"
+                >
+                  Reset to Defaults
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* Framework Version Footer */}
       <div className="text-center text-xs text-slate-400 mt-8">

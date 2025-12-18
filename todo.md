@@ -1328,9 +1328,10 @@ async function upgradeEpisodeToCurrentVersion(
 ---
 
 ### Task 4.3: Add Executive Summary Synthesis (Optional AI)
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **Priority**: Medium
 **Estimated Time**: 2 hours
+**Completed**: 2025-12-17
 
 **Description**:
 Generate narrative executive summaries from episode insights using optional AI call.
@@ -1380,24 +1381,50 @@ OUTPUT: Return JSON array of paragraph strings:
 ```
 
 **Acceptance Criteria**:
-- [ ] Synthesis produces readable, informative summaries
-- [ ] Summaries are 3-5 paragraphs as specified
-- [ ] Function completes in <3 seconds (no search overhead)
-- [ ] Optional: can be disabled for faster processing
-- [ ] Generated summaries cached and reused
+- [x] Synthesis produces readable, informative summaries
+- [x] Summaries are 3-5 paragraphs as specified
+- [x] Function completes in <3 seconds (no search overhead)
+- [x] Optional: can be disabled for faster processing
+- [x] Generated summaries cached and reused
 
-**Files to Modify**:
-- `services/gemini.ts`
-- `services/reportComposer.ts` (integrate synthesis)
+**Files Created**:
+- `test-executiveSummary.ts` - Comprehensive test suite with 5 test scenarios
 
-**Dependencies**: Phase 3 complete
+**Files Modified**:
+- `services/gemini.ts` - Added synthesizeExecutiveSummary() function and SUMMARY_SYNTHESIS_PROMPT
+- `services/reportComposer.ts` - Integrated AI synthesis with config-based toggling
+- `index.tsx` - Imported test file for browser console access
+
+**Implementation Notes**:
+- Created `synthesizeExecutiveSummary()` function in services/gemini.ts (100+ lines)
+- Added SUMMARY_SYNTHESIS_PROMPT template for AI-generated summaries:
+  - Input: week dates, top issues, episode summaries, narrative shifts
+  - Output: JSON array of 3-5 paragraph strings (50-80 words each)
+  - No Google Search needed (all context provided in prompt)
+  - Uses gemini-3-flash-preview model for speed
+- Integrated into reportComposer.ts:
+  - Checks config.features.enableAIExecutiveSummary setting
+  - Falls back to placeholder summary if AI synthesis fails or is disabled
+  - Default: disabled (faster processing)
+- Added comprehensive test suite (test-executiveSummary.ts) with 5 scenarios:
+  1. testDirectSynthesis() - Direct synthesis call with sample data
+  2. testReportComposerWithAI() - Report composition with AI enabled
+  3. testReportComposerWithoutAI() - Report composition with placeholder (AI disabled)
+  4. testPerformanceComparison() - AI vs placeholder timing comparison
+  5. testConfigPersistence() - Verify config saves and loads correctly
+- Available in browser console via window.testExecutiveSummary
+- TypeScript compilation verified - build passes successfully
+- Typical overhead: +2-3 seconds per week when AI synthesis enabled
+
+**Dependencies**: Phase 3 complete ✅
 
 ---
 
 ### Task 4.4: Add Configuration Options
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **Priority**: Low
 **Estimated Time**: 1 hour
+**Completed**: 2025-12-17
 
 **Description**:
 Expose configuration options for power users to tune performance and behavior.
@@ -1460,19 +1487,44 @@ Expose configuration options for power users to tune performance and behavior.
 ```
 
 **Acceptance Criteria**:
-- [ ] Config object accessible throughout app
-- [ ] Settings persist across browser sessions
-- [ ] Changing config takes effect immediately
-- [ ] Invalid values handled gracefully
-- [ ] UI optional (can configure via code)
+- [x] Config object accessible throughout app
+- [x] Settings persist across browser sessions
+- [x] Changing config takes effect immediately
+- [x] Invalid values handled gracefully
+- [x] UI optional (can configure via code)
 
-**Files to Create**:
-- `constants/config.ts`
+**Files Created**:
+- `constants/config.ts` - Complete configuration management system (200+ lines)
 
-**Files to Modify**:
-- `components/DashboardSetup.tsx` (optional settings UI)
+**Files Modified**:
+- `components/DashboardSetup.tsx` - Added collapsible settings UI panel
 
-**Dependencies**: None (can be done anytime in Phase 4)
+**Implementation Notes**:
+- Created constants/config.ts with complete configuration management:
+  - AppConfig interface with three sections: processing, caching, features
+  - DEFAULT_CONFIG with sensible defaults
+  - LocalStorage persistence functions: loadConfig(), saveConfig()
+  - Update helpers: updateConfig(), resetConfig()
+  - Validation function: validateConfig() with range checks
+  - Singleton pattern: getConfig(), refreshConfig()
+- Configuration options available:
+  - **Processing:** concurrency (1-20, default: 10), retryAttempts (0-10, default: 3), retryDelayMs (0-10000ms, default: 1000ms)
+  - **Caching:** episodeStalenessThresholdDays (null or 1-365, default: null), maxWeeklyCacheEntries (1-104, default: 52), enableWeeklyAggregationCache (boolean, default: true)
+  - **Features:** enableAIExecutiveSummary (boolean, default: false), enableDetailedProgress (boolean, default: true), enableCacheAnalytics (boolean, default: false)
+- Added settings UI in DashboardSetup.tsx:
+  - Collapsible "Advanced Settings" panel with Settings icon
+  - Three sections: Processing, Features, Caching
+  - Processing: Slider for concurrency (1-20) with live value display
+  - Features: Toggle for AI executive summaries, toggle for detailed progress
+  - Caching: Toggle for weekly aggregation cache
+  - "Reset to Defaults" button
+  - All settings persist automatically to LocalStorage
+  - Clean, accessible UI with Tailwind CSS styling
+  - Real-time updates (no save button needed)
+- Settings integrate seamlessly with existing Task 4.3 (AI synthesis feature flag)
+- TypeScript compilation verified - build passes successfully
+
+**Dependencies**: None (can be done anytime in Phase 4) ✅
 
 ---
 

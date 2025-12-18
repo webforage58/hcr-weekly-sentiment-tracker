@@ -6,6 +6,7 @@ import App from './App';
 import './test-weeklyCache';
 import './test-cachesStaleness';
 import './test-frameworkVersioning';
+import './test-executiveSummary';
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {

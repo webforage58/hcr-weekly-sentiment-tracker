@@ -20,6 +20,8 @@ import {
 } from './episodeDB';
 import { computeDeltas, normalizeTopic, rankIssues, DeltaResult } from '../utils/aggregation';
 import { FRAMEWORK_VERSION } from '../constants/frameworkVersion';
+import { synthesizeExecutiveSummary } from './gemini';
+import { getConfig } from '../constants/config';
 
 // Current framework version for cache validation
 const CURRENT_FRAMEWORK_VERSION = FRAMEWORK_VERSION;
@@ -315,8 +317,32 @@ export async function composeWeeklyReport(
     // Compute quality flags
     const qualityFlags = computeQualityFlags(currentWeekEpisodes, currentWeekIssues);
 
-    // Generate placeholder executive summary (Phase 4 will add AI synthesis)
-    const executiveSummary = generatePlaceholderSummary(top5, currentWeekEpisodes);
+    // Generate executive summary (AI synthesis or placeholder based on config)
+    const config = getConfig();
+    let executiveSummary: string[];
+
+    if (config.features.enableAIExecutiveSummary) {
+      console.log('AI executive summary synthesis enabled, calling Gemini API...');
+      try {
+        // Extract narrative shift descriptions
+        const shiftDescriptions = narrativeShifts.map(s => s.shift);
+
+        executiveSummary = await synthesizeExecutiveSummary(
+          weekStart,
+          weekEnd,
+          top5,
+          currentWeekEpisodes,
+          shiftDescriptions
+        );
+        console.log(`✓ AI executive summary generated (${executiveSummary.length} paragraphs)`);
+      } catch (error) {
+        console.error('AI summary synthesis failed, falling back to placeholder:', error);
+        executiveSummary = generatePlaceholderSummary(top5, currentWeekEpisodes);
+      }
+    } else {
+      console.log('Using placeholder executive summary (AI synthesis disabled in config)');
+      executiveSummary = generatePlaceholderSummary(top5, currentWeekEpisodes);
+    }
 
     // Build sources_analyzed array
     const sourcesAnalyzed: AnalyzedSource[] = currentWeekEpisodes.map(ep => ({

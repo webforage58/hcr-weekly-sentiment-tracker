@@ -155,6 +155,42 @@ REQUIRED JSON OUTPUT SCHEMA:
 }
 `;
 
+const SUMMARY_SYNTHESIS_PROMPT = `
+You are a political analysis writer specializing in weekly political commentary summaries.
+
+TASK: Write a concise, informative executive summary (3-5 paragraphs, 50-80 words each) for this week's political sentiment analysis based on Heather Cox Richardson's shows.
+
+INPUT DATA:
+Week Period: {{WEEK_START}} to {{WEEK_END}}
+
+Top Issues (ranked by prominence):
+{{TOP_ISSUES_JSON}}
+
+Episode Summaries:
+{{EPISODE_SUMMARIES}}
+
+Narrative Shifts:
+{{NARRATIVE_SHIFTS}}
+
+INSTRUCTIONS:
+1. Write 3-5 distinct paragraphs, each 50-80 words
+2. Be specific: mention bills, events, names, and dates when available
+3. Explain WHY sentiment changed (not just that it did)
+4. Focus on narrative shifts and notable developments
+5. Use active voice and clear language
+6. Each paragraph should cover a distinct theme or issue
+7. Ground all claims in the provided evidence and topics
+
+OUTPUT REQUIREMENTS:
+- Return ONLY a valid JSON array of paragraph strings.
+- NO markdown formatting (like \`\`\`json).
+- ESCAPE ALL DOUBLE QUOTES inside string values.
+- NO TRAILING COMMAS.
+
+REQUIRED JSON OUTPUT SCHEMA:
+["Paragraph 1 text here (50-80 words)...", "Paragraph 2 text here...", "Paragraph 3 text here..."]
+`;
+
 const SAFETY_SETTINGS = [
   { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
   { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
@@ -405,6 +441,117 @@ export async function analyzeEpisode(
         throw e;
       }
       throw new Error("JSON_PARSE_ERROR");
+    }
+  });
+}
+
+/**
+ * Synthesizes an AI-generated executive summary from weekly report data.
+ * This is an optional enhancement that provides more detailed, narrative-driven summaries
+ * compared to the placeholder summaries.
+ *
+ * @param weekStart - Start date of the week (YYYY-MM-DD)
+ * @param weekEnd - End date of the week (YYYY-MM-DD)
+ * @param topIssues - Array of ranked issues with sentiment and evidence
+ * @param episodes - Array of episode insights from the week
+ * @param narrativeShifts - Array of narrative shift descriptions
+ * @returns Array of paragraph strings (3-5 paragraphs, 50-80 words each)
+ */
+export async function synthesizeExecutiveSummary(
+  weekStart: string,
+  weekEnd: string,
+  topIssues: Array<{
+    issue_name: string;
+    avg_sentiment: number;
+    avg_prominence: number;
+    episode_count: number;
+    delta_vs_prior_week?: number | "unknown";
+    movement?: string;
+  }>,
+  episodes: EpisodeInsight[],
+  narrativeShifts: string[]
+): Promise<string[]> {
+  // Prepare top issues summary for prompt
+  const topIssuesJson = JSON.stringify(
+    topIssues.slice(0, 5).map((issue, idx) => ({
+      rank: idx + 1,
+      name: issue.issue_name,
+      sentiment: Math.round(issue.avg_sentiment),
+      prominence: issue.avg_prominence.toFixed(2),
+      episodes_mentioned: issue.episode_count,
+      delta: issue.delta_vs_prior_week,
+      movement: issue.movement
+    })),
+    null,
+    2
+  );
+
+  // Prepare episode summaries (condensed)
+  const episodeSummaries = episodes.map(ep => {
+    const topTopics = ep.topics
+      .slice(0, 3)
+      .map(t => `${t.topic_name} (sentiment: ${t.sentiment_score})`)
+      .join(', ');
+    return `- ${ep.show_name} (${ep.published_at}): ${ep.title}. Topics: ${topTopics}`;
+  }).join('\n');
+
+  // Prepare narrative shifts
+  const shiftsText = narrativeShifts.length > 0
+    ? narrativeShifts.map(shift => `- ${shift}`).join('\n')
+    : '- No major narrative shifts identified this week';
+
+  // Build the prompt
+  const prompt = SUMMARY_SYNTHESIS_PROMPT
+    .replace('{{WEEK_START}}', weekStart)
+    .replace('{{WEEK_END}}', weekEnd)
+    .replace('{{TOP_ISSUES_JSON}}', topIssuesJson)
+    .replace('{{EPISODE_SUMMARIES}}', episodeSummaries)
+    .replace('{{NARRATIVE_SHIFTS}}', shiftsText);
+
+  console.log(`Synthesizing executive summary for ${weekStart} to ${weekEnd}...`);
+
+  return withRetry<string[]>(async () => {
+    // Create fresh instance to ensure we use current process.env.API_KEY
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: prompt,
+      config: {
+        // No search needed - all context is provided
+        safetySettings: SAFETY_SETTINGS,
+      }
+    });
+
+    let text = response.text;
+    if (!text) {
+      throw new Error('No response from Gemini for executive summary synthesis.');
+    }
+
+    const cleanText = cleanJsonText(text);
+    try {
+      const parsed = JSON.parse(cleanText);
+
+      // Validate output is an array of strings
+      if (!Array.isArray(parsed)) {
+        throw new Error('Expected array of paragraph strings');
+      }
+
+      const paragraphs = parsed
+        .filter(p => typeof p === 'string' && p.trim().length > 0)
+        .map(p => p.trim());
+
+      if (paragraphs.length < 3 || paragraphs.length > 5) {
+        console.warn(`Expected 3-5 paragraphs, got ${paragraphs.length}. Proceeding anyway.`);
+      }
+
+      console.log(`✓ Synthesized executive summary with ${paragraphs.length} paragraphs`);
+      return paragraphs;
+    } catch (e) {
+      console.error('Executive summary parse error:', e, 'Text:', cleanText);
+      if (e instanceof Error) {
+        throw e;
+      }
+      throw new Error('JSON_PARSE_ERROR');
     }
   });
 }

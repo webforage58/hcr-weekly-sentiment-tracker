@@ -2,17 +2,17 @@
 
 **Project Goal**: Scale from 4-week to 24-week (and eventually 52-week) analysis capability through episode-centric architecture
 
-**Last Updated**: 2025-12-18
+**Last Updated**: 2025-12-17
 
 ---
 
 ## Current Phase
 
-**Phase**: Phase 4 - Optimization
-**Status**: In Progress (2/4 tasks complete)
-**Start Date**: 2025-12-17
-**Current Task**: Task 4.3 - Add Executive Summary Synthesis (optional)
-**Completed Tasks**: Task 4.1 ✅ (2025-12-17), Task 4.2 ✅ (2025-12-17)
+**Phase**: Phase 5 - Scale Testing
+**Status**: Not Started (0/5 tasks complete)
+**Start Date**: TBD
+**Current Task**: Task 5.1 - Create Performance Benchmarking Suite
+**Previous Phase**: Phase 4 - Optimization ✅ (Completed 2025-12-17)
 
 ---
 
@@ -82,17 +82,19 @@
 - **Task 3.3 (Completed 2025-12-18)**: Implemented weekly aggregation caching to speed up re-runs. Added cache validation logic that checks framework version and episode IDs. Implemented convertAggregationToReport() to reconstruct HCRReport from cached WeeklyAggregation. Added automatic cache pruning to keep only the most recent 52 weeks. Created test-weeklyCache.ts with 5 comprehensive test scenarios covering cache hits, misses, invalidation, pruning, and performance. Build passes successfully.
 - **Task 3.4 (Completed 2025-12-18)**: Updated DashboardSetup.tsx to complete the two-phase pipeline migration. Removed 4-week limit and increased to 52 weeks (1 year). Added comprehensive validation: date range ordering, partial episode processing failures, and weekly episode coverage checks. Added better error messages for edge cases. Added inline documentation of new pipeline architecture. UI text updated to reflect new 52-week capability. Build passes successfully. Core pipeline was already implemented in Task 2.4; this task added the final validations and removed legacy limits.
 
-### 🟢 Phase 4: Optimization (Target: 1 day)
+### ✅ Phase 4: Optimization (Target: 1 day)
 - [x] Task 4.1: Incremental analysis (skip cached episodes)
 - [x] Task 4.2: Framework versioning
-- [ ] Task 4.3: Executive summary synthesis (optional AI call)
-- [ ] Task 4.4: Add configuration options
+- [x] Task 4.3: Executive summary synthesis (optional AI call)
+- [x] Task 4.4: Add configuration options
 
-**Status**: In Progress (2/4 tasks complete - 50%)
+**Status**: Complete (All 4 tasks complete - 100%)
 **Blockers**: None
 **Notes**:
-- Task 4.1 completed on 2025-12-17. Most functionality was already present from Phase 2 (Task 2.3). Added cache staleness detection as the missing piece - episodes cached longer than a configurable threshold are automatically reprocessed. Created comprehensive test suite (test-cachesStaleness.ts) with 5 test scenarios.
-- Task 4.2 completed on 2025-12-17. Created centralized framework version management system with FRAMEWORK_VERSION constant, version comparison utilities, and reprocessing functions. Added getEpisodesNeedingUpdate(), getEpisodeCountsByVersion(), reprocessWithFrameworkVersion(), and upgradeEpisodeToCurrentVersion(). Updated episodeProcessor.ts and reportComposer.ts to use centralized constant. Added version display UI in DashboardSetup. Created comprehensive test suite (test-frameworkVersioning.ts) with 10 test scenarios. Build passes successfully.
+- **Task 4.1 (Completed 2025-12-17)**: Most functionality was already present from Phase 2 (Task 2.3). Added cache staleness detection as the missing piece - episodes cached longer than a configurable threshold are automatically reprocessed. Created comprehensive test suite (test-cachesStaleness.ts) with 5 test scenarios.
+- **Task 4.2 (Completed 2025-12-17)**: Created centralized framework version management system with FRAMEWORK_VERSION constant, version comparison utilities, and reprocessing functions. Added getEpisodesNeedingUpdate(), getEpisodeCountsByVersion(), reprocessWithFrameworkVersion(), and upgradeEpisodeToCurrentVersion(). Updated episodeProcessor.ts and reportComposer.ts to use centralized constant. Added version display UI in DashboardSetup. Created comprehensive test suite (test-frameworkVersioning.ts) with 10 test scenarios. Build passes successfully.
+- **Task 4.3 (Completed 2025-12-17)**: Implemented AI-powered executive summary synthesis. Created `synthesizeExecutiveSummary()` function in services/gemini.ts with SUMMARY_SYNTHESIS_PROMPT template. Function generates 3-5 paragraph summaries (50-80 words each) from top issues, episode summaries, and narrative shifts. Uses gemini-3-flash-preview (no search needed, ~2-3s per week). Integrated into reportComposer.ts with config-based toggling via `config.features.enableAIExecutiveSummary` (default: false). Includes graceful fallback to placeholder summaries if AI synthesis fails. Created comprehensive test suite (test-executiveSummary.ts) with 5 scenarios covering direct synthesis, AI-enabled composition, placeholder composition, performance comparison, and config persistence. Available in browser console via window.testExecutiveSummary. Build passes successfully.
+- **Task 4.4 (Completed 2025-12-17)**: Created complete configuration management system in constants/config.ts (200+ lines). Implemented AppConfig interface with three sections (processing, caching, features), LocalStorage persistence, validation, and update/reset helpers. Configuration options include concurrency (1-20), retry settings, cache thresholds, and feature flags (AI summaries, detailed progress, cache analytics). Added collapsible "Advanced Settings" UI panel in DashboardSetup.tsx with three sections: Processing (concurrency slider), Features (AI summaries toggle, detailed progress toggle), and Caching (weekly aggregation cache toggle). Settings persist automatically to LocalStorage with real-time updates. Includes "Reset to Defaults" button. Integrates seamlessly with Task 4.3 AI synthesis feature. Build passes successfully.
 
 ### ⬜ Phase 5: Scale Testing (Target: 1 day)
 - [ ] Test with 52 weeks (100+ episodes)
@@ -270,10 +272,14 @@ Display dashboard
 
 ## Next Actions
 
-1. **Immediate**: Continue Phase 4 - Task 4.3 (Add Executive Summary Synthesis - optional)
-2. **Today**: Complete remaining Phase 4 optimization tasks (executive summary synthesis, configuration options)
-3. **This Week**: Execute Phase 5 scale testing and performance documentation
-4. **Note**: Task 4.1 complete (2025-12-17) - cache staleness detection added. Task 4.2 complete (2025-12-17) - framework versioning system fully implemented.
+1. **Immediate**: Begin Phase 5 - Task 5.1 (Create Performance Benchmarking Suite)
+2. **Phase 5 Tasks**:
+   - Task 5.1: Create Performance Benchmarking Suite
+   - Task 5.2: Real-World 52-Week Test
+   - Task 5.3: Storage Stress Testing
+   - Task 5.4: Cross-Browser Compatibility Testing
+   - Task 5.5: Document Performance Improvements
+3. **Note**: Phase 4 complete (2025-12-17) - All optimization tasks finished including AI executive summary synthesis and configuration management system.
 
 ---
 
@@ -537,6 +543,69 @@ Display dashboard
 - **Available in browser console:** `window.testFrameworkVersioning.runAll()`
 - **Files created:** `constants/frameworkVersion.ts`, `test-frameworkVersioning.ts`
 - **Files modified:** `services/episodeProcessor.ts`, `services/reportComposer.ts`, `components/DashboardSetup.tsx`, `index.tsx`
+- **Build passes successfully** - TypeScript compilation verified
+
+**Task 4.3 (2025-12-17):**
+- **Created AI-powered executive summary synthesis** as optional enhancement
+- **Added `synthesizeExecutiveSummary()` function** in services/gemini.ts (100+ lines):
+  - Function signature: `synthesizeExecutiveSummary(weekStart, weekEnd, topIssues, episodes, narrativeShifts)`
+  - Input: Top 5 issues with sentiment/prominence, episode summaries, narrative shift descriptions
+  - Output: Array of 3-5 paragraph strings (50-80 words each)
+  - Uses gemini-3-flash-preview model (no Google Search needed - all context provided)
+  - Typical processing time: 2-3 seconds per week
+- **Created SUMMARY_SYNTHESIS_PROMPT** template:
+  - Instructs AI to write specific, evidence-based summaries
+  - Requires mentioning bills, events, names, dates when available
+  - Focuses on WHY sentiment changed, not just that it did
+  - Emphasizes narrative shifts and notable developments
+  - Returns clean JSON array (no markdown code blocks)
+- **Integrated into reportComposer.ts**:
+  - Modified `composeWeeklyReport()` to conditionally use AI synthesis
+  - Checks `config.features.enableAIExecutiveSummary` setting (default: false)
+  - Falls back to `generatePlaceholderSummary()` if AI synthesis fails or disabled
+  - Maintains backward compatibility with existing placeholder summaries
+- **Created comprehensive test suite** (test-executiveSummary.ts) with 5 scenarios:
+  1. testDirectSynthesis() - Direct synthesis with sample data, validates paragraph count and word counts
+  2. testReportComposerWithAI() - Full report composition with AI synthesis enabled
+  3. testReportComposerWithoutAI() - Full report composition with placeholder (AI disabled)
+  4. testPerformanceComparison() - Measures AI overhead vs placeholder (<5s acceptable)
+  5. testConfigPersistence() - Validates settings save/load/reset correctly
+- **Available in browser console:** `window.testExecutiveSummary.runAll()`
+- **Files created:** `test-executiveSummary.ts`
+- **Files modified:** `services/gemini.ts`, `services/reportComposer.ts`, `index.tsx`
+- **Build passes successfully** - TypeScript compilation verified
+- **Feature is optional by design:** Disabled by default for faster processing, can be enabled in settings
+
+**Task 4.4 (2025-12-17):**
+- **Created complete configuration management system** in constants/config.ts (200+ lines)
+- **Implemented AppConfig interface** with three sections:
+  - **Processing:** concurrency (1-20, default: 10), retryAttempts (0-10, default: 3), retryDelayMs (0-10000ms, default: 1000ms)
+  - **Caching:** episodeStalenessThresholdDays (null or 1-365, default: null), maxWeeklyCacheEntries (1-104, default: 52), enableWeeklyAggregationCache (boolean, default: true)
+  - **Features:** enableAIExecutiveSummary (boolean, default: false), enableDetailedProgress (boolean, default: true), enableCacheAnalytics (boolean, default: false)
+- **Configuration persistence functions:**
+  - `loadConfig()` - Loads from LocalStorage with deep merge fallback to defaults
+  - `saveConfig()` - Persists entire config to LocalStorage
+  - `updateConfig()` - Updates single setting and auto-saves
+  - `resetConfig()` - Restores all defaults
+  - `validateConfig()` - Validates ranges and returns errors array
+  - `getConfig()` / `refreshConfig()` - Singleton pattern for efficient access
+- **Added settings UI** in DashboardSetup.tsx:
+  - Collapsible "Advanced Settings" panel with Settings icon and chevron indicator
+  - Three organized sections: Processing, Features, Caching
+  - **Processing section:** Slider for concurrency (1-20) with live value display and description
+  - **Features section:** Two toggles (AI executive summaries, detailed progress) with descriptions
+  - **Caching section:** Toggle for weekly aggregation cache with description
+  - "Reset to Defaults" button at bottom
+  - All controls have hover states and accessible labels
+  - Real-time updates (no save button needed - changes persist immediately)
+  - Clean, professional UI using Tailwind CSS
+- **Settings state management:**
+  - Added useState for showSettings (toggle panel) and config (current settings)
+  - Config automatically loaded on component mount via getConfig()
+  - All updates use updateConfig() which handles persistence
+- **Integrates seamlessly** with Task 4.3 AI synthesis feature via enableAIExecutiveSummary flag
+- **Files created:** `constants/config.ts`
+- **Files modified:** `components/DashboardSetup.tsx`
 - **Build passes successfully** - TypeScript compilation verified
 
 ---
