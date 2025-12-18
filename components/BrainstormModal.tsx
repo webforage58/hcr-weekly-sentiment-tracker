@@ -21,13 +21,17 @@ export const BrainstormModal: React.FC<Props> = ({ isOpen, onClose, report }) =>
   const [error, setError] = useState<string | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
 
+  // Custom date range state (defaults to report date range)
+  const [startDate, setStartDate] = useState(report.run_window.window_start);
+  const [endDate, setEndDate] = useState(report.run_window.window_end);
+
   if (!isOpen) return null;
 
   const handleGenerate = async () => {
     setLoading(true);
     setError(null);
     try {
-      const result = await generateMarketBrainstorm(report);
+      const result = await generateMarketBrainstorm(report, startDate, endDate);
       setData(result);
     } catch (err) {
       setError("Failed to generate market analysis. Please try again.");
@@ -101,11 +105,42 @@ export const BrainstormModal: React.FC<Props> = ({ isOpen, onClose, report }) =>
               <div className="bg-indigo-50 p-6 rounded-full">
                 <TrendingUp className="w-12 h-12 text-indigo-500" />
               </div>
-              <div className="max-w-md">
+              <div className="max-w-md w-full">
                 <h4 className="text-xl font-semibold text-slate-900 mb-2">Quantify the Impact</h4>
                 <p className="text-slate-500 mb-6">
-                  The AI will retrieve <strong>actual market data</strong> (S&P 500, Yields, VIX) for the week of <strong>{report.run_window.window_start}</strong> and analyze correlations with the political sentiment.
+                  The AI will retrieve <strong>actual market data</strong> (S&P 500, Yields, VIX) and analyze correlations with the political sentiment.
                 </p>
+
+                {/* Date Range Picker */}
+                <div className="bg-white border border-slate-200 rounded-lg p-4 mb-6 text-left">
+                  <label className="block text-sm font-medium text-slate-700 mb-3">
+                    Select Date Range for Market Data
+                  </label>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs text-slate-600 mb-1">Start Date</label>
+                      <input
+                        type="date"
+                        value={startDate}
+                        onChange={(e) => setStartDate(e.target.value)}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-slate-600 mb-1">End Date</label>
+                      <input
+                        type="date"
+                        value={endDate}
+                        onChange={(e) => setEndDate(e.target.value)}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                      />
+                    </div>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-2">
+                    Default: Report range ({report.run_window.window_start} to {report.run_window.window_end})
+                  </p>
+                </div>
+
                 <button
                   onClick={handleGenerate}
                   className="px-6 py-3 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition-colors shadow-sm flex items-center justify-center gap-2 mx-auto"

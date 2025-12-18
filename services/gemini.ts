@@ -556,7 +556,15 @@ export async function synthesizeExecutiveSummary(
   });
 }
 
-export async function generateMarketBrainstorm(report: HCRReport): Promise<MarketAnalysisResult> {
+export async function generateMarketBrainstorm(
+  report: HCRReport,
+  customStartDate?: string,
+  customEndDate?: string
+): Promise<MarketAnalysisResult> {
+  // Use custom date range if provided, otherwise fall back to report's date range
+  const startDate = customStartDate || report.run_window.window_start;
+  const endDate = customEndDate || report.run_window.window_end;
+
   const context = JSON.stringify({
     executive_summary: report.executive_summary,
     top_issues: report.top_issues.map(i => ({
@@ -571,8 +579,8 @@ export async function generateMarketBrainstorm(report: HCRReport): Promise<Marke
   }, null, 2);
 
   const prompt = MARKET_ANALYSIS_PROMPT_TEMPLATE
-    .replace('{{WINDOW_START}}', report.run_window.window_start)
-    .replace('{{WINDOW_END}}', report.run_window.window_end) 
+    .replace('{{WINDOW_START}}', startDate)
+    .replace('{{WINDOW_END}}', endDate)
     + `\nINPUT DATA:\n${context}`;
 
   return withRetry<MarketAnalysisResult>(async () => {
