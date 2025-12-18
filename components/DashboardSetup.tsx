@@ -133,14 +133,19 @@ export const DashboardSetup: React.FC<Props> = ({ onDataLoaded, onUseDemo }) => 
         return;
     }
 
-    // Validate 4-week limit
+    // Validate date range (significantly increased from 4-week limit)
     const start = new Date(startDate);
     const end = new Date(endDate);
     const diffTime = Math.abs(end.getTime() - start.getTime());
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
-    if (diffDays > 28) {
-      setError("To ensure fast generation, please select a date range of 4 weeks or less.");
+    if (diffDays > 365) {
+      setError("Maximum date range is 52 weeks (1 year).");
+      return;
+    }
+
+    if (start > end) {
+      setError("Start date must be before or equal to end date.");
       return;
     }
 
@@ -164,6 +169,11 @@ export const DashboardSetup: React.FC<Props> = ({ onDataLoaded, onUseDemo }) => 
     });
 
     try {
+      // NEW TWO-PHASE PIPELINE (replaced old week-by-week sequential processing)
+      // Phase 1: Parallel episode processing with caching
+      // Phase 2: Weekly report composition from cached episodes
+      // This enables 52-week analysis vs. old 4-week limit
+
       const concurrency = 10;
 
       const processResult = await processEpisodesInRange(startDate, endDate, {
@@ -200,11 +210,22 @@ export const DashboardSetup: React.FC<Props> = ({ onDataLoaded, onUseDemo }) => 
         throw new Error('Processing cancelled');
       }
 
+      // Validate episode processing results
       if (processResult.stats.totalEpisodes === 0) {
         setError("No episodes found in the selected date range.");
         return;
       }
 
+      if (processResult.stats.failed > 0) {
+        console.warn(`Warning: ${processResult.stats.failed} episode(s) failed to process. Continuing with available data.`);
+      }
+
+      if (processResult.stats.failed === processResult.stats.totalEpisodes) {
+        setError("All episodes failed to process. Please check your API key and try again.");
+        return;
+      }
+
+      // Phase 2: Compose weekly reports from episode insights
       const reports: HCRReport[] = [];
       setProgress({
         phase: 'composing',
@@ -230,6 +251,19 @@ export const DashboardSetup: React.FC<Props> = ({ onDataLoaded, onUseDemo }) => 
         });
       }
 
+      // Validate weekly coverage - ensure all weeks have at least some episode data
+      const weeksWithoutEpisodes = reports.filter(r => r.sources_analyzed.length === 0);
+      if (weeksWithoutEpisodes.length > 0) {
+        const weekList = weeksWithoutEpisodes.map(r => r.run_window.window_start).join(', ');
+        console.warn(`Warning: ${weeksWithoutEpisodes.length} week(s) have no episode coverage: ${weekList}`);
+      }
+
+      if (weeksWithoutEpisodes.length === reports.length) {
+        setError("No episode coverage found for any week in the selected range. Try a different date range.");
+        return;
+      }
+
+      // Phase 3: Aggregate and display
       const finalReport = aggregateReports(reports);
       onDataLoaded(finalReport);
 
@@ -324,7 +358,7 @@ export const DashboardSetup: React.FC<Props> = ({ onDataLoaded, onUseDemo }) => 
                 onChange={(e) => setEndDate(e.target.value)}
                 className="w-full rounded-lg border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
               />
-              <p className="text-xs text-slate-400 mt-1">Maximum 4 weeks allowed per run.</p>
+              <p className="text-xs text-slate-400 mt-1">Maximum 52 weeks (1 year) per analysis.</p>
             </div>
 
             {error && (

@@ -8,10 +8,11 @@
 
 ## Current Phase
 
-**Phase**: Phase 3 - Aggregation Engine (In Progress)
-**Status**: Deterministic ranking implemented; delta logic partially implemented; weekly caching still pending
+**Phase**: Phase 4 - Optimization
+**Status**: In Progress (1/4 tasks complete)
 **Start Date**: 2025-12-17
-**Current Task**: Harden deltas + weekly aggregation caching
+**Current Task**: Task 4.2 - Implement framework versioning
+**Completed Tasks**: Task 4.1 ✅ (2025-12-17)
 
 ---
 
@@ -71,22 +72,25 @@
 - [x] Build deterministic topic ranking algorithm (Task 3.1)
 - [x] Implement week-over-week delta computation with evidence-based descriptions (Task 3.2)
 - [x] Cache weekly aggregations (Task 3.3)
+- [x] Update main generation flow (Task 3.4)
 
-**Status**: Complete (All 3 tasks complete - 100%)
+**Status**: Complete (All 4 tasks complete - 100%)
 **Blockers**: None
 **Notes**:
 - **Task 3.1 (Completed 2025-12-18)**: Manual app testing surfaced a critical aggregation bug: weeks with episodes were returning an empty `top_issues` list. Root causes: overly strict filtering, missing/malformed topic fields causing NaN averages, and date range queries missing timestamped episodes. Fixes: hardened topic parsing with numeric coercion, added fallback ranking behavior, normalized `published_at` to YYYY-MM-DD, and extended test harness.
 - **Task 3.2 (Completed 2025-12-18)**: Implemented evidence-based delta descriptions that extract key themes from evidence quotes. Created `buildEnhancedDeltaDescription()` function that analyzes evidence using regex patterns to identify developments, concerns, actions, and focus areas. Delta descriptions now include specific context like "emerged following recent court rulings" instead of generic "emerged as new focus." Test suite (test-enhanced-deltas.ts) includes 5 scenarios validating new issues, sentiment improvements, declines, and steady coverage.
 - **Task 3.3 (Completed 2025-12-18)**: Implemented weekly aggregation caching to speed up re-runs. Added cache validation logic that checks framework version and episode IDs. Implemented convertAggregationToReport() to reconstruct HCRReport from cached WeeklyAggregation. Added automatic cache pruning to keep only the most recent 52 weeks. Created test-weeklyCache.ts with 5 comprehensive test scenarios covering cache hits, misses, invalidation, pruning, and performance. Build passes successfully.
+- **Task 3.4 (Completed 2025-12-18)**: Updated DashboardSetup.tsx to complete the two-phase pipeline migration. Removed 4-week limit and increased to 52 weeks (1 year). Added comprehensive validation: date range ordering, partial episode processing failures, and weekly episode coverage checks. Added better error messages for edge cases. Added inline documentation of new pipeline architecture. UI text updated to reflect new 52-week capability. Build passes successfully. Core pipeline was already implemented in Task 2.4; this task added the final validations and removed legacy limits.
 
-### ⬜ Phase 4: Optimization (Target: 1 day)
-- [ ] Incremental analysis (skip cached episodes)
-- [ ] Framework versioning
-- [ ] Executive summary synthesis (optional AI call)
+### 🟢 Phase 4: Optimization (Target: 1 day)
+- [x] Task 4.1: Incremental analysis (skip cached episodes)
+- [ ] Task 4.2: Framework versioning
+- [ ] Task 4.3: Executive summary synthesis (optional AI call)
+- [ ] Task 4.4: Add configuration options
 
-**Status**: Not Started
-**Blockers**: Requires Phase 3 completion
-**Notes**: -
+**Status**: In Progress (1/4 tasks complete - 25%)
+**Blockers**: None
+**Notes**: Task 4.1 completed on 2025-12-17. Most functionality was already present from Phase 2 (Task 2.3). Added cache staleness detection as the missing piece - episodes cached longer than a configurable threshold are automatically reprocessed. Created comprehensive test suite (test-cachesStaleness.ts) with 5 test scenarios.
 
 ### ⬜ Phase 5: Scale Testing (Target: 1 day)
 - [ ] Test with 52 weeks (100+ episodes)
@@ -264,10 +268,10 @@ Display dashboard
 
 ## Next Actions
 
-1. **Immediate**: Re-run `await window.aggregationTests.runAll()` and verify `top_issues` populates for real week windows.
-2. **Today**: Finish Phase 3 (week-over-week delta hardening + weekly aggregation caching).
-3. **This Week**: Start Phase 4 optimization tasks (incremental analysis, framework versioning)
-4. **Next Week**: Execute Phase 5 scale testing and performance documentation
+1. **Immediate**: Continue Phase 4 - Task 4.2 (Implement framework versioning)
+2. **Today**: Complete remaining Phase 4 optimization tasks (framework versioning, executive summary synthesis, configuration options)
+3. **This Week**: Execute Phase 5 scale testing and performance documentation
+4. **Note**: Task 4.1 complete (2025-12-17) - cache staleness detection added. Most incremental analysis was already implemented in Phase 2.
 
 ---
 
@@ -470,6 +474,27 @@ Display dashboard
 - Added cached vs. new episode messaging, episode titles in progress text, and time estimates via `estimateProcessingTime()`.
 - Introduced cancel support using `AbortController` to halt processing and suppress further progress callbacks when requested.
 - Progress UI now anchors in the generate card with responsive layout; button copy mirrors the active phase for user clarity.
+
+### Phase 4 Implementation Notes
+
+**Task 4.1 (2025-12-17):**
+- **Core functionality already implemented:** Most incremental analysis logic was already present from Task 2.3 (Episode Processor). The `categorizeEpisodes()` function in `services/episodeProcessor.ts` already separated cached vs. uncached episodes and only analyzed new episodes.
+- **Added cache staleness detection:** This was the only missing piece from the original requirements:
+  - Added `stalenessThresholdDays` option to ProcessOptions interface (default: null = disabled)
+  - Modified `categorizeEpisodes()` function to check `processed_at` timestamp against threshold
+  - Episodes older than the threshold are treated as uncached and automatically reprocessed
+  - Updated logging to show stale episode count: "40 cached, 8 new, 2 stale"
+  - `forceReprocess` option overrides staleness detection (reprocesses all episodes)
+- **Created comprehensive test suite:** `test-cachesStaleness.ts` with 5 test scenarios:
+  1. Staleness detection disabled by default - verifies old episodes use cache
+  2. Staleness detection enabled with 30-day threshold - verifies old episodes trigger reprocessing
+  3. Fresh episodes not reprocessed - verifies episodes within threshold use cache
+  4. Force reprocess overrides staleness check - verifies forceReprocess works correctly
+  5. Mixed fresh and stale episodes - verifies correct handling of both types
+- **Available in browser console:** `window.testCacheStaleness.runAll()`
+- **Files modified:** `services/episodeProcessor.ts`, `index.tsx`
+- **Files created:** `test-cachesStaleness.ts`
+- **Build passes successfully** - TypeScript compilation verified
 
 ---
 

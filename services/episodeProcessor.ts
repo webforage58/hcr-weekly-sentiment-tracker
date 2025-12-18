@@ -28,6 +28,9 @@ export interface ProcessOptions {
   /** Framework version to use for new analyses (default: "v2") */
   frameworkVersion?: string;
 
+  /** Reprocess episodes cached longer than this many days ago (default: null = disabled) */
+  stalenessThresholdDays?: number | null;
+
   /** Callback fired after each episode completes (cached or new) */
   onProgress?: (completed: number, total: number, currentEpisode: string, isCached: boolean) => void;
 
@@ -68,6 +71,7 @@ const DEFAULT_OPTIONS: ProcessOptions = {
   concurrency: 10,
   forceReprocess: false,
   frameworkVersion: 'v2',
+  stalenessThresholdDays: null, // Disabled by default
   onProgress: () => {},
   onDiscoveryComplete: () => {},
   signal: undefined
@@ -138,12 +142,13 @@ export async function processEpisodesInRange(
 
     // Phase 2: Check cache for existing episodes
     console.log('[EpisodeProcessor] Phase 2: Checking cache...');
-    const { cached, uncached } = await categorizeEpisodes(
+    const { cached, uncached, stale } = await categorizeEpisodes(
       searchResults,
-      opts.forceReprocess
+      opts.forceReprocess,
+      opts.stalenessThresholdDays
     );
 
-    console.log(`[EpisodeProcessor] Cache status: ${cached.length} cached, ${uncached.length} new`);
+    console.log(`[EpisodeProcessor] Cache status: ${cached.length} cached, ${uncached.length} new${stale > 0 ? `, ${stale} stale` : ''}`);
 
     throwIfAborted();
 
@@ -257,18 +262,26 @@ export async function processEpisodesInRange(
  */
 async function categorizeEpisodes(
   searchResults: EpisodeMetadata[],
-  forceReprocess: boolean
+  forceReprocess: boolean,
+  stalenessThresholdDays: number | null | undefined
 ): Promise<{
   cached: EpisodeInsight[];
   uncached: EpisodeMetadata[];
+  stale: number;
 }> {
   const cached: EpisodeInsight[] = [];
   const uncached: EpisodeMetadata[] = [];
+  let staleCount = 0;
 
   if (forceReprocess) {
     // Force reprocess: all episodes are uncached
-    return { cached: [], uncached: searchResults };
+    return { cached: [], uncached: searchResults, stale: 0 };
   }
+
+  // Calculate staleness threshold timestamp if enabled
+  const stalenessThreshold = stalenessThresholdDays
+    ? Date.now() - (stalenessThresholdDays * 24 * 60 * 60 * 1000)
+    : null;
 
   // Check each episode in cache
   for (const metadata of searchResults) {
@@ -278,6 +291,20 @@ async function categorizeEpisodes(
       // Retrieve from cache
       const episode = await getEpisode(metadata.episode_id);
       if (episode) {
+        // Check if episode is stale (if staleness detection enabled)
+        if (stalenessThreshold !== null) {
+          const processedAt = new Date(episode.processed_at).getTime();
+
+          if (processedAt < stalenessThreshold) {
+            // Episode is stale - treat as uncached
+            console.log(`[EpisodeProcessor] Episode ${metadata.episode_id} is stale (processed ${episode.processed_at}), will reprocess`);
+            uncached.push(metadata);
+            staleCount++;
+            continue;
+          }
+        }
+
+        // Episode is fresh (or staleness check disabled) - use cached version
         cached.push(episode);
       } else {
         // Exists but couldn't retrieve - treat as uncached
@@ -288,7 +315,7 @@ async function categorizeEpisodes(
     }
   }
 
-  return { cached, uncached };
+  return { cached, uncached, stale: staleCount };
 }
 
 /**
