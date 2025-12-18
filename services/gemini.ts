@@ -68,11 +68,14 @@ Find the daily closing performance metrics for the following assets during the T
 - CBOE Volatility Index (VIX): Closing level.
 
 Step 2: Comparative Analysis & Strategy
-- Compare the "Sentiment Index" and "Narrative Shifts" against actual market moves.
+- Compare political sentiment changes across the ENTIRE target period against actual market moves.
+- If sentiment data is provided as a weekly time series, identify inflection points (regime changes), not just the most recent week.
+- Note when sentiment trends diverge from market behavior (e.g., sentiment deteriorates while equities rally).
 - Provide actionable advice for asset allocation.
 
 Step 3: Sentiment Attribution
 - Assign an "hcr_sentiment" score (0-100) to each day in the daily_data.
+  - If only weekly sentiment is available, interpolate/step daily sentiment in a sensible way and call out limitations.
 
 Output Format
 Return a single valid JSON object. 
@@ -266,6 +269,37 @@ function normalizeDateYmd(value: unknown, fallback: string): string {
   return fallback;
 }
 
+function normalizeDateYmdOrNull(value: unknown): string | null {
+  if (typeof value === 'string') {
+    const match = value.match(/^\d{4}-\d{2}-\d{2}/);
+    if (match) return match[0];
+    const parsed = new Date(value);
+    if (!isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
+  }
+  return null;
+}
+
+function computeOverallSentimentIndexFromIssues(report: HCRReport): number | null {
+  const values = report.top_issues
+    .map(i => (typeof i.sentiment_index === 'number' ? i.sentiment_index : null))
+    .filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+  if (values.length === 0) return null;
+  return Math.round(values.reduce((sum, v) => sum + v, 0) / values.length);
+}
+
+function computeSentimentForDate(report: HCRReport, dateYmd: string): number | null {
+  const series = report.period_series;
+  if (Array.isArray(series) && series.length > 0) {
+    for (const week of series) {
+      if (dateYmd >= week.week_start && dateYmd <= week.week_end) {
+        return typeof week.overall_sentiment_index === 'number' ? week.overall_sentiment_index : null;
+      }
+    }
+  }
+  // Fallback: treat the report as a single bucket.
+  return computeOverallSentimentIndexFromIssues(report);
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
@@ -414,7 +448,7 @@ export async function analyzeEpisode(
       const fallbackQuotes = topics.flatMap(t => t.evidence_quotes).slice(0, 5);
 
       const parsed: EpisodeInsight = {
-        episode_id: String(raw?.episode_id ?? episodeId),
+        episode_id: episodeId,
         show_name: String(raw?.show_name ?? episodeMetadata.show_name),
         title: String(raw?.title ?? episodeMetadata.title),
         published_at: publishedAt,
@@ -565,18 +599,31 @@ export async function generateMarketBrainstorm(
   const startDate = customStartDate || report.run_window.window_start;
   const endDate = customEndDate || report.run_window.window_end;
 
-  const context = JSON.stringify({
-    executive_summary: report.executive_summary,
-    top_issues: report.top_issues.map(i => ({
-      name: i.issue_name,
-      sentiment: i.sentiment_index,
-      label: i.sentiment_label,
-      change: i.what_changed_week_over_week
-    })),
-    narrative_shifts: report.narrative_shifts.map(n => n.shift),
-    gaining: report.issues_gaining_importance.map(i => i.issue_name),
-    losing: report.issues_losing_importance.map(i => i.issue_name)
-  }, null, 2);
+  const context = JSON.stringify(
+    {
+      analysis_window: report.run_window,
+      is_aggregated: Boolean(report.isAggregated),
+
+      // Latest-week snapshot (always present)
+      executive_summary: report.executive_summary,
+      top_issues_latest_week: report.top_issues.map(i => ({
+        name: i.issue_name,
+        sentiment: i.sentiment_index,
+        label: i.sentiment_label,
+        change_vs_prior_week: i.what_changed_week_over_week,
+        change_over_period: i.what_changed_over_period ?? null
+      })),
+      narrative_shifts_latest_week: report.narrative_shifts.map(n => n.shift),
+      gaining_latest_week: report.issues_gaining_importance.map(i => i.issue_name),
+      losing_latest_week: report.issues_losing_importance.map(i => i.issue_name),
+
+      // Optional: full-period sentiment context (present on aggregated multi-week reports)
+      period_comparison: report.period_comparison ?? null,
+      period_series: report.period_series ?? null
+    },
+    null,
+    2
+  );
 
   const prompt = MARKET_ANALYSIS_PROMPT_TEMPLATE
     .replace('{{WINDOW_START}}', startDate)
@@ -609,6 +656,28 @@ export async function generateMarketBrainstorm(
         if (!parsed.analysis_markdown) {
             parsed.analysis_markdown = "Analysis generation incomplete.";
         }
+
+        // Prefer the app's computed sentiment series (derived from weekly composition)
+        // over model-assigned daily sentiment values.
+        if (Array.isArray(parsed.daily_data)) {
+          let overwritten = 0;
+          parsed.daily_data = parsed.daily_data
+            .map((row: any) => {
+              const dateYmd = normalizeDateYmdOrNull(row?.date);
+              if (!dateYmd) return row;
+              const sentiment = computeSentimentForDate(report, dateYmd);
+              if (typeof sentiment !== 'number') return { ...row, date: dateYmd };
+              overwritten += 1;
+              return { ...row, date: dateYmd, hcr_sentiment: sentiment };
+            })
+            .filter((row: any) => row && typeof row === 'object');
+
+          if (overwritten > 0) {
+            parsed.analysis_markdown +=
+              `\n\n---\n\nNote: The chart’s sentiment series is derived from the report’s weekly sentiment data across the selected period.`;
+          }
+        }
+
         return parsed as MarketAnalysisResult;
     } catch (e) {
         console.error("JSON Parse Error in generateMarketBrainstorm:", e, "Text:", cleanText);

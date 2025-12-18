@@ -202,15 +202,18 @@ async function convertAggregationToReport(
 }
 
 /**
- * Prunes old weekly aggregations, keeping only the most recent 52 weeks.
+ * Prunes old weekly aggregations, keeping only the most recent N weeks.
  * Helps prevent unbounded storage growth.
  */
 async function pruneOldWeeklyAggregations(): Promise<void> {
   try {
     const allAggregations = await getAllWeeklyAggregations();
 
-    // If we have 52 or fewer, no pruning needed
-    if (allAggregations.length <= 52) {
+    const config = getConfig();
+    const maxEntries = Math.max(1, config.caching.maxWeeklyCacheEntries || 52);
+
+    // If we have maxEntries or fewer, no pruning needed
+    if (allAggregations.length <= maxEntries) {
       return;
     }
 
@@ -219,9 +222,9 @@ async function pruneOldWeeklyAggregations(): Promise<void> {
       b.week_start.localeCompare(a.week_start)
     );
 
-    // Keep first 52, delete the rest
-    const toDelete = sorted.slice(52);
-    console.log(`Pruning ${toDelete.length} old weekly aggregations (keeping most recent 52)`);
+    // Keep first maxEntries, delete the rest
+    const toDelete = sorted.slice(maxEntries);
+    console.log(`Pruning ${toDelete.length} old weekly aggregations (keeping most recent ${maxEntries})`);
 
     for (const aggregation of toDelete) {
       await deleteWeeklyAggregation(aggregation.week_start);
@@ -254,30 +257,37 @@ export async function composeWeeklyReport(
   console.log(`Composing weekly report for ${weekStart} to ${weekEnd}`);
 
   try {
-    // Check if we have a cached weekly aggregation
-    const cachedAggregation = await getWeeklyAggregation(weekStart);
+    const config = getConfig();
+    const enableWeeklyCache = config.caching.enableWeeklyAggregationCache;
 
-    if (cachedAggregation) {
-      console.log(`Found cached weekly aggregation for ${weekStart}`);
+    if (enableWeeklyCache) {
+      // Check if we have a cached weekly aggregation
+      const cachedAggregation = await getWeeklyAggregation(weekStart);
 
-      // Query current week episodes to validate cache
-      const currentWeekEpisodes = await getEpisodesByDateRange(weekStart, weekEnd);
+      if (cachedAggregation) {
+        console.log(`Found cached weekly aggregation for ${weekStart}`);
 
-      // Validate cache is still valid
-      const isCacheValid = await validateWeeklyCache(cachedAggregation, currentWeekEpisodes);
+        // Query current week episodes to validate cache
+        const currentWeekEpisodes = await getEpisodesByDateRange(weekStart, weekEnd);
 
-      if (isCacheValid) {
-        console.log(`✓ Using cached weekly aggregation for ${weekStart} (cache hit)`);
-        return await convertAggregationToReport(
-          cachedAggregation,
-          weekStart,
-          weekEnd,
-          priorWeekStart,
-          priorWeekEnd
-        );
-      } else {
-        console.log(`✗ Cache invalid for ${weekStart}, recomputing...`);
+        // Validate cache is still valid
+        const isCacheValid = await validateWeeklyCache(cachedAggregation, currentWeekEpisodes);
+
+        if (isCacheValid) {
+          console.log(`✓ Using cached weekly aggregation for ${weekStart} (cache hit)`);
+          return await convertAggregationToReport(
+            cachedAggregation,
+            weekStart,
+            weekEnd,
+            priorWeekStart,
+            priorWeekEnd
+          );
+        } else {
+          console.log(`✗ Cache invalid for ${weekStart}, recomputing...`);
+        }
       }
+    } else {
+      console.log('Weekly aggregation caching disabled (config.caching.enableWeeklyAggregationCache=false)');
     }
 
     // Cache miss or invalid - compute fresh report
@@ -318,7 +328,6 @@ export async function composeWeeklyReport(
     const qualityFlags = computeQualityFlags(currentWeekEpisodes, currentWeekIssues);
 
     // Generate executive summary (AI synthesis or placeholder based on config)
-    const config = getConfig();
     let executiveSummary: string[];
 
     if (config.features.enableAIExecutiveSummary) {
@@ -377,32 +386,34 @@ export async function composeWeeklyReport(
     };
 
     // Cache the weekly aggregation for future re-runs
-    try {
-      const aggregatedIssues: AggregatedIssue[] = top5.map(issue => ({
-        issue_name: issue.issue_name,
-        avg_sentiment: issue.avg_sentiment,
-        confidence: issue.avg_confidence,
-        episode_count: issue.episode_count,
-        evidence: buildEvidenceArray(issue, currentWeekEpisodes)
-      }));
+    if (enableWeeklyCache) {
+      try {
+        const aggregatedIssues: AggregatedIssue[] = top5.map(issue => ({
+          issue_name: issue.issue_name,
+          avg_sentiment: issue.avg_sentiment,
+          confidence: issue.avg_confidence,
+          episode_count: issue.episode_count,
+          evidence: buildEvidenceArray(issue, currentWeekEpisodes)
+        }));
 
-      const weeklyAggregation: WeeklyAggregation = {
-        week_start: weekStart,
-        week_end: weekEnd,
-        episode_ids: currentWeekEpisodes.map(ep => ep.episode_id),
-        top_issues: aggregatedIssues,
-        computed_at: report.generated_at,
-        framework_version: CURRENT_FRAMEWORK_VERSION
-      };
+        const weeklyAggregation: WeeklyAggregation = {
+          week_start: weekStart,
+          week_end: weekEnd,
+          episode_ids: currentWeekEpisodes.map(ep => ep.episode_id),
+          top_issues: aggregatedIssues,
+          computed_at: report.generated_at,
+          framework_version: CURRENT_FRAMEWORK_VERSION
+        };
 
-      await saveWeeklyAggregation(weeklyAggregation);
-      console.log(`✓ Cached weekly aggregation for ${weekStart}`);
+        await saveWeeklyAggregation(weeklyAggregation);
+        console.log(`✓ Cached weekly aggregation for ${weekStart}`);
 
-      // Prune old aggregations to prevent unbounded growth
-      await pruneOldWeeklyAggregations();
-    } catch (cacheError) {
-      // Non-fatal: log error but continue
-      console.error('Failed to cache weekly aggregation:', cacheError);
+        // Prune old aggregations to prevent unbounded growth
+        await pruneOldWeeklyAggregations();
+      } catch (cacheError) {
+        // Non-fatal: log error but continue
+        console.error('Failed to cache weekly aggregation:', cacheError);
+      }
     }
 
     return report;

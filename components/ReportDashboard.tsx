@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Cell 
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Cell, LineChart, Line
 } from 'recharts';
 import { 
-  ArrowUpRight, ArrowDownRight, Minus, AlertTriangle, ShieldCheck, Calendar, Radio, LineChart 
+  ArrowUpRight, ArrowDownRight, Minus, AlertTriangle, ShieldCheck, Calendar, Radio, LineChart as LineChartIcon 
 } from 'lucide-react';
 import { HCRReport, IssueEntry } from '../types';
 import { SentimentBadge } from './SentimentBadge';
@@ -35,6 +35,27 @@ export const ReportDashboard: React.FC<Props> = ({ data }) => {
     if (delta > 0) return <ArrowUpRight className="w-4 h-4 text-green-600" />;
     if (delta < 0) return <ArrowDownRight className="w-4 h-4 text-red-600" />;
     return <Minus className="w-4 h-4 text-gray-400" />;
+  };
+
+  const period = data.period_comparison;
+  const periodSeries = data.period_series;
+  const showPeriod =
+    Boolean(data.isAggregated) &&
+    Boolean(period) &&
+    Boolean(periodSeries) &&
+    (periodSeries?.length ?? 0) > 1;
+
+  const periodChartData =
+    showPeriod && periodSeries
+      ? periodSeries.map(p => ({
+          week_start: p.week_start,
+          overall: typeof p.overall_sentiment_index === 'number' ? p.overall_sentiment_index : null
+        }))
+      : [];
+
+  const formatSigned = (value: number | 'unknown' | undefined): string => {
+    if (value === 'unknown' || typeof value !== 'number') return 'unknown';
+    return `${value > 0 ? '+' : ''}${value}`;
   };
 
   return (
@@ -73,16 +94,110 @@ export const ReportDashboard: React.FC<Props> = ({ data }) => {
                <div className="text-sm font-semibold">{data.sources_analyzed.length} Episodes</div>
             </div>
           </div>
-          
+
           <button 
             onClick={() => setShowBrainstorm(true)}
             className="ml-4 px-4 py-2 bg-slate-900 text-white text-sm font-semibold rounded-lg hover:bg-slate-800 transition-colors flex items-center gap-2 shadow-sm"
           >
-            <LineChart className="w-4 h-4" />
+            <LineChartIcon className="w-4 h-4" />
             Market Analysis
           </button>
         </div>
       </div>
+
+      {/* Period Trend (Aggregated Multi-Week View) */}
+      {showPeriod && period && periodSeries && (
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+          <div className="flex items-start justify-between gap-6 flex-col lg:flex-row">
+            <div className="min-w-0">
+              <h3 className="text-lg font-bold text-slate-900 serif">Period Trend Summary</h3>
+              <p className="text-sm text-slate-600 mt-1">
+                Change over {period.week_count} weeks: overall sentiment {formatSigned(period.overall_sentiment_delta)} points
+                ({period.overall_sentiment_start} → {period.overall_sentiment_end})
+              </p>
+              {period.notes.length > 0 && (
+                <ul className="mt-3 space-y-2 text-sm text-slate-600">
+                  {period.notes.slice(0, 3).map((note, idx) => (
+                    <li key={idx} className="flex items-start gap-2">
+                      <span className="text-indigo-600 font-bold mt-0.5">•</span>
+                      <span className="min-w-0">{note}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div className="w-full lg:w-[420px] shrink-0">
+              <div className="h-44 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={periodChartData}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                    <XAxis
+                      dataKey="week_start"
+                      tickFormatter={(str) => String(str).slice(5)}
+                      interval={Math.max(0, Math.floor((periodSeries.length - 1) / 6))}
+                      tick={{ fill: '#64748b', fontSize: 11 }}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <YAxis
+                      domain={[0, 100]}
+                      tick={{ fill: '#64748b', fontSize: 11 }}
+                      axisLine={false}
+                      tickLine={false}
+                      width={30}
+                    />
+                    <Tooltip
+                      contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                      labelFormatter={(label) => `Week starting ${label}`}
+                    />
+                    <ReferenceLine y={50} stroke="#94a3b8" strokeDasharray="3 3" />
+                    <Line
+                      type="monotone"
+                      dataKey="overall"
+                      name="Overall Sentiment"
+                      stroke="#6366f1"
+                      strokeWidth={2}
+                      dot={false}
+                      connectNulls
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="grid grid-cols-2 gap-4 mt-4 text-sm">
+                <div className="bg-slate-50 rounded-lg border border-slate-100 p-3">
+                  <div className="text-xs text-slate-500 uppercase font-bold tracking-wider">Top Improvers</div>
+                  <ul className="mt-2 space-y-1">
+                    {period.top_gainers.length === 0 && (
+                      <li className="text-slate-400 text-xs">None</li>
+                    )}
+                    {period.top_gainers.slice(0, 3).map((t) => (
+                      <li key={t.normalized_name} className="flex items-center justify-between gap-3">
+                        <span className="text-slate-800 truncate">{t.issue_name}</span>
+                        <span className="text-green-700 font-semibold">+{t.delta}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="bg-slate-50 rounded-lg border border-slate-100 p-3">
+                  <div className="text-xs text-slate-500 uppercase font-bold tracking-wider">Top Decliners</div>
+                  <ul className="mt-2 space-y-1">
+                    {period.top_losers.length === 0 && (
+                      <li className="text-slate-400 text-xs">None</li>
+                    )}
+                    {period.top_losers.slice(0, 3).map((t) => (
+                      <li key={t.normalized_name} className="flex items-center justify-between gap-3">
+                        <span className="text-slate-800 truncate">{t.issue_name}</span>
+                        <span className="text-red-700 font-semibold">{t.delta}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Summary & Chart Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -161,6 +276,17 @@ export const ReportDashboard: React.FC<Props> = ({ data }) => {
                           {getDeltaIcon(issue.delta_vs_prior_week)}
                           {issue.delta_vs_prior_week !== 'unknown' && Math.abs(issue.delta_vs_prior_week as number)} pts vs last week
                         </span>
+                        {data.isAggregated && typeof issue.delta_vs_period_start !== 'undefined' && (
+                          <>
+                            <span>•</span>
+                            <span className="flex items-center gap-1">
+                              {getDeltaIcon(issue.delta_vs_period_start)}
+                              {issue.delta_vs_period_start !== 'unknown'
+                                ? `${Math.abs(issue.delta_vs_period_start as number)} pts vs period start`
+                                : 'Period baseline unknown'}
+                            </span>
+                          </>
+                        )}
                         <span>•</span>
                         <span>{(issue.confidence * 100).toFixed(0)}% Confidence</span>
                       </div>
@@ -181,6 +307,13 @@ export const ReportDashboard: React.FC<Props> = ({ data }) => {
                     {issue.what_changed_week_over_week}
                   </div>
                 </div>
+
+                {data.isAggregated && issue.what_changed_over_period && (
+                  <div className="bg-indigo-50 p-3 rounded border border-indigo-100 text-sm text-slate-700 mb-4">
+                    <strong className="block text-slate-900 mb-1">Change Over Period</strong>
+                    {issue.what_changed_over_period}
+                  </div>
+                )}
 
                 <EvidenceList evidence={issue.evidence} />
               </div>

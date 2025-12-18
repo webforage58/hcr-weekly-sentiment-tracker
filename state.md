@@ -2,17 +2,18 @@
 
 **Project Goal**: Scale from 4-week to 24-week (and eventually 52-week) analysis capability through episode-centric architecture
 
-**Last Updated**: 2025-12-17
+**Last Updated**: 2025-12-18
 
 ---
 
 ## Current Phase
 
 **Phase**: Phase 5 - Scale Testing
-**Status**: Not Started (0/5 tasks complete)
-**Start Date**: TBD
-**Current Task**: Task 5.1 - Create Performance Benchmarking Suite
+**Status**: In Progress (1/4 tasks complete)
+**Start Date**: 2025-12-18
+**Current Task**: Task 5.2 - Real-World 52-Week Test
 **Previous Phase**: Phase 4 - Optimization ✅ (Completed 2025-12-17)
+**Recent Enhancement**: Period-Wide Sentiment Comparison + Market Period Alignment ✅ (Completed 2025-12-18)
 
 ---
 
@@ -97,13 +98,52 @@
 - **Task 4.4 (Completed 2025-12-17)**: Created complete configuration management system in constants/config.ts (200+ lines). Implemented AppConfig interface with three sections (processing, caching, features), LocalStorage persistence, validation, and update/reset helpers. Configuration options include concurrency (1-20), retry settings, cache thresholds, and feature flags (AI summaries, detailed progress, cache analytics). Added collapsible "Advanced Settings" UI panel in DashboardSetup.tsx with three sections: Processing (concurrency slider), Features (AI summaries toggle, detailed progress toggle), and Caching (weekly aggregation cache toggle). Settings persist automatically to LocalStorage with real-time updates. Includes "Reset to Defaults" button. Integrates seamlessly with Task 4.3 AI synthesis feature. Build passes successfully.
 
 ### ⬜ Phase 5: Scale Testing (Target: 1 day)
-- [ ] Test with 52 weeks (100+ episodes)
-- [ ] Measure performance against targets
-- [ ] Stress test storage limits
+- [x] Task 5.1: Create Performance Benchmarking Suite ✅ (Completed 2025-12-18)
+- [ ] Task 5.2: Real-World 52-Week Test (In Progress)
+- [ ] Task 5.3: Storage Stress Testing
+- [ ] Task 5.4: Document Performance Improvements
 
-**Status**: Not Started
+**Status**: In Progress (1/4 tasks complete)
 **Blockers**: Requires Phase 4 completion
-**Notes**: -
+**Notes**:
+- Task 5.1 implemented as a browser-run benchmark harness: `test-performanceBench.ts` (exposed as `window.performanceBenchTests`)
+- Added dependency injection in `services/episodeProcessor.ts` so benchmarks can mock episode discovery + analysis without network/Gemini
+- Weekly aggregation cache toggle (`config.caching.enableWeeklyAggregationCache`) and max entry pruning now enforced in `services/reportComposer.ts`
+- Cross-browser compatibility testing removed from scope
+
+### Task 5.2: Real-World 52-Week Test (Run Log)
+
+### 52-Week Test Results
+
+**Test Date**: 2025-12-18
+**Date Range**: 2025-11-18 to 2025-12-18
+**Weeks**: 5
+**Config**: concurrency=10, weeklyCache=true, aiSummary=false
+
+**Episodes Analyzed**: X
+
+**First Run (Cold Cache)**:
+- [ ] (run not recorded yet)
+
+**Second Run (Warm Cache)**:
+- [x] Analysis completed successfully
+- [ ] Started at (UTC): 2025-12-18T03:31:56.081Z
+- [ ] Ended at (UTC): 2025-12-18T03:35:09.202Z
+- [ ] Time elapsed: 193.05s (target: <5s)
+  - breakdown: episode_processing=192.97s, weekly_composition=0.08s
+- [x] API calls made (approx): 23 (expected: 0 (fully cached))
+  - breakdown: search=0, episode_analysis=23, exec_summary=0
+- [x] Storage used: 2.42 MB (Δ 122.73 KB, target: <15MB)
+- [ ] Memory peak: 36.13 MB (sampled)
+- [x] All 5 weeks have reports: Yes
+- [x] No episode processing errors: Yes
+- [ ] Cache hit rate (episodes): 0.0%
+
+**UI Performance**:
+- [ ] Dashboard renders smoothly with 52 weeks
+- [ ] Chart interactions responsive
+- [ ] Export completes without freezing
+- [ ] Import loads 52-week report correctly
 
 ---
 
@@ -183,7 +223,7 @@ Display dashboard
 ## Known Issues & Risks
 
 ### Active Issues
-- None (pre-implementation)
+- Warm-cache rerun still triggers episode analysis (0% episode cache hit rate observed on 2025-12-18).
 
 ### Risk Register
 
@@ -272,14 +312,14 @@ Display dashboard
 
 ## Next Actions
 
-1. **Immediate**: Begin Phase 5 - Task 5.1 (Create Performance Benchmarking Suite)
-2. **Phase 5 Tasks**:
-   - Task 5.1: Create Performance Benchmarking Suite
-   - Task 5.2: Real-World 52-Week Test
-   - Task 5.3: Storage Stress Testing
-   - Task 5.4: Cross-Browser Compatibility Testing
-   - Task 5.5: Document Performance Improvements
-3. **Note**: Phase 4 complete (2025-12-17) - All optimization tasks finished including AI executive summary synthesis and configuration management system.
+1. **Immediate**: Add dashboard toggle: "Latest week" vs "Period overview" and rank issues across the whole period
+2. **Phase 5**:
+   - Continue Task 5.2 real-world testing (cold + warm) and re-check cache hit rate
+   - Complete Task 5.3 storage stress testing and record quotas/evictions
+   - Complete Task 5.4 documentation with actual measured metrics
+3. **Completed**:
+   - Phase 4 (2025-12-17) - All optimization tasks finished including AI executive summary synthesis and configuration management system
+   - Market Analysis Date Range Selection (2025-12-17) - Enhanced UI for custom date selection in market correlation analysis
 
 ---
 
@@ -606,6 +646,44 @@ Display dashboard
 - **Integrates seamlessly** with Task 4.3 AI synthesis feature via enableAIExecutiveSummary flag
 - **Files created:** `constants/config.ts`
 - **Files modified:** `components/DashboardSetup.tsx`
+- **Build passes successfully** - TypeScript compilation verified
+
+### Additional Enhancements (Post-Phase 4)
+
+**Market Analysis Date Range Selection (2025-12-17):**
+- **Enhanced Market Correlation Analysis modal** to allow custom date range selection for market data
+- **Previously:** Market analysis was locked to the report's date range
+- **Now:** Users can select any custom date range for market data while keeping the sentiment report data unchanged
+- **Implementation details:**
+  - Added date range state to BrainstormModal (startDate, endDate) with defaults to report dates
+  - Created clean date picker UI with two date input fields in responsive grid layout
+  - Updated `generateMarketBrainstorm()` function signature to accept optional customStartDate and customEndDate parameters
+  - Implemented smart date handling: uses custom dates if provided, otherwise falls back to report dates
+  - Fully backward compatible - existing calls without date parameters continue to work
+- **User benefits:**
+  - Analyze market data for any date range, not just the report period
+  - Compare sentiment with market data from different time periods
+  - Enables more flexible correlation analysis
+- **Files modified:**
+  - `components/BrainstormModal.tsx` - Added date picker UI and state management
+  - `services/gemini.ts` - Updated generateMarketBrainstorm() function signature
+- **Build passes successfully** - TypeScript compilation verified
+
+**Period-Wide Sentiment Comparison + Market Period Alignment (2025-12-18):**
+- **Problem:** The dashboard emphasized week-over-week deltas only (current week vs prior week), and market charts relied on model-assigned daily sentiment instead of the report's computed sentiment trend.
+- **Now:** Aggregated reports include full-period sentiment series and a period comparison summary; the dashboard shows a period trend panel; market analysis uses the report-derived sentiment timeline across the selected window.
+- **Implementation details:**
+  - Added `period_series` + `period_comparison` to aggregated `HCRReport` (weekly sentiment timeline + start→end deltas, gainers/losers, inflection notes)
+  - Added issue-level period fields (`delta_vs_period_start`, `what_changed_over_period`) for latest-week issue cards
+  - Added a "Period Trend Summary" panel to the dashboard (line chart + top movers)
+  - Overwrites `daily_data[].hcr_sentiment` in market results using the report's weekly series (step/weekly mapping) so charts match the selected analysis period
+  - Market modal now re-syncs its default date range to the current report when opened
+- **Files modified:**
+  - `types.ts`
+  - `utils/reportUtils.ts`
+  - `components/ReportDashboard.tsx`
+  - `services/gemini.ts`
+  - `components/BrainstormModal.tsx`
 - **Build passes successfully** - TypeScript compilation verified
 
 ---

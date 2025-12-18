@@ -19,11 +19,29 @@ import {
 import { FRAMEWORK_VERSION } from '../constants/frameworkVersion';
 
 /**
+ * Injectable dependencies for testing/benchmarking.
+ *
+ * Allows callers (e.g., `test-performanceBench.ts`) to run the pipeline with
+ * mocked episode discovery and/or analysis without touching real network/AI.
+ */
+export interface ProcessDependencies {
+  searchEpisodesInRange?: (startDate: string, endDate: string) => Promise<EpisodeMetadata[]>;
+  analyzeEpisode?: (
+    episodeId: string,
+    episodeMetadata: EpisodeMetadata,
+    frameworkVersion?: string
+  ) => Promise<EpisodeInsight>;
+}
+
+/**
  * Options for episode processing
  */
 export interface ProcessOptions {
   /** Maximum number of concurrent episode analyses (default: 10) */
   concurrency?: number;
+
+  /** Optional dependency overrides (used by manual tests/benchmarks) */
+  deps?: ProcessDependencies;
 
   /** Force reprocessing of all episodes, even if cached (default: false) */
   forceReprocess?: boolean;
@@ -107,6 +125,9 @@ export async function processEpisodesInRange(
   const abortSignal = opts.signal;
   const onProgress = opts.onProgress ?? (() => {});
   const onDiscoveryComplete = opts.onDiscoveryComplete ?? (() => {});
+  const deps = opts.deps ?? {};
+  const searchFn = deps.searchEpisodesInRange ?? searchEpisodesInRange;
+  const analyzeFn = deps.analyzeEpisode ?? analyzeEpisode;
 
   console.log(`[EpisodeProcessor] Processing episodes from ${startDate} to ${endDate}`);
   console.log(`[EpisodeProcessor] Concurrency: ${concurrency}, Force reprocess: ${opts.forceReprocess}`);
@@ -122,7 +143,7 @@ export async function processEpisodesInRange(
 
     // Phase 1: Discover episodes in date range
     console.log('[EpisodeProcessor] Phase 1: Discovering episodes...');
-    const searchResults = await searchEpisodesInRange(startDate, endDate);
+    const searchResults = await searchFn(startDate, endDate);
 
     throwIfAborted();
 
@@ -183,16 +204,17 @@ export async function processEpisodesInRange(
         uncached,
         async (episodeMetadata) => {
           try {
-            const insight = await analyzeEpisode(
+            const insight = await analyzeFn(
               episodeMetadata.episode_id,
               episodeMetadata,
               opts.frameworkVersion
             );
 
             // Save to cache immediately
-            await saveEpisode(insight);
+            const normalizedInsight = { ...insight, episode_id: episodeMetadata.episode_id };
+            await saveEpisode(normalizedInsight);
 
-            return { success: true, insight, error: null };
+            return { success: true, insight: normalizedInsight, error: null };
           } catch (error) {
             const errorMsg = error instanceof Error ? error.message : String(error);
             console.error(`[EpisodeProcessor] Failed to analyze episode ${episodeMetadata.episode_id}:`, errorMsg);

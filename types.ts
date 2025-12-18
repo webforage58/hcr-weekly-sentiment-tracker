@@ -30,8 +30,13 @@ export interface IssueEntry {
   sentiment_label: "positive" | "neutral" | "negative" | "mixed" | "unknown";
   confidence: number;
   delta_vs_prior_week: number | "unknown";
+  // Optional: present on aggregated multi-week reports, comparing the latest week
+  // to the start of the analysis period (or first observed week for that issue).
+  delta_vs_period_start?: number | "unknown";
   why_this_week: string;
   what_changed_week_over_week: string;
+  // Optional: present on aggregated multi-week reports.
+  what_changed_over_period?: string;
   evidence: Evidence[];
 }
 
@@ -54,6 +59,42 @@ export interface QualityFlags {
   notes: string[];
 }
 
+export interface PeriodWeekSummary {
+  week_start: string;
+  week_end: string;
+  overall_sentiment_index: number | "unknown";
+  episode_count?: number;
+  top_issues: Array<{
+    issue_name: string;
+    sentiment_index: number | "unknown";
+    confidence: number;
+  }>;
+  narrative_shifts?: string[];
+}
+
+export interface PeriodIssueTrend {
+  issue_name: string;
+  normalized_name: string;
+  weeks_present: number;
+  first_week_start: string;
+  last_week_start: string;
+  first_sentiment: number | "unknown";
+  last_sentiment: number | "unknown";
+  delta: number | "unknown";
+  avg_sentiment: number | "unknown";
+  volatility: number | "unknown";
+}
+
+export interface PeriodComparison {
+  week_count: number;
+  overall_sentiment_start: number | "unknown";
+  overall_sentiment_end: number | "unknown";
+  overall_sentiment_delta: number | "unknown";
+  top_gainers: PeriodIssueTrend[];
+  top_losers: PeriodIssueTrend[];
+  notes: string[];
+}
+
 export interface HCRReport {
   isAggregated?: boolean;
   run_window: RunWindow;
@@ -67,6 +108,9 @@ export interface HCRReport {
   narrative_shifts: NarrativeShift[];
   evidence_gaps: string[];
   quality_flags: QualityFlags;
+  // Present only when `isAggregated` is true.
+  period_series?: PeriodWeekSummary[];
+  period_comparison?: PeriodComparison;
 }
 
 export interface DailyMarketData {

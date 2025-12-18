@@ -270,8 +270,8 @@ async function testConfigPersistence() {
 
     // Test reset
     resetConfig();
-    const resetConfig = getConfig();
-    if (resetConfig.features.enableAIExecutiveSummary === false) {
+    const resetConfigState = getConfig();
+    if (resetConfigState.features.enableAIExecutiveSummary === false) {
       console.log('✓ Config reset to defaults correctly');
     } else {
       console.error('✗ Config reset failed');

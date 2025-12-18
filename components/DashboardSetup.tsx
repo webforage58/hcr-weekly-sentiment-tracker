@@ -5,6 +5,7 @@ import { processEpisodesInRange, estimateProcessingTime } from '../services/epis
 import { composeWeeklyReport } from '../services/reportComposer';
 import { getWeekWindows, aggregateReports } from '../utils/reportUtils';
 import { migrateWeeklyReportsToEpisodes, isMigrationNeeded, getMigrationStats } from '../utils/migration';
+import { getActiveRealWorld52WeekTestLogger } from '../utils/realWorldRunLogger';
 import { FRAMEWORK_VERSION } from '../constants/frameworkVersion';
 import { getConfig, updateConfig, resetConfig, type AppConfig } from '../constants/config';
 
@@ -174,14 +175,27 @@ export const DashboardSetup: React.FC<Props> = ({ onDataLoaded, onUseDemo }) => 
       currentItem: "Discovering episodes..."
     });
 
+    const runLogger = getActiveRealWorld52WeekTestLogger();
+    let runLabel: 'cold' | 'warm' | null = null;
+    let runLoggerEnded = false;
+
     try {
+      runLabel = await runLogger?.beginIfArmed({
+        startDate,
+        endDate,
+        weeksTotal: windows.length,
+        frameworkVersion: FRAMEWORK_VERSION,
+        configSnapshot: config
+      }) ?? null;
+
       // NEW TWO-PHASE PIPELINE (replaced old week-by-week sequential processing)
       // Phase 1: Parallel episode processing with caching
       // Phase 2: Weekly report composition from cached episodes
       // This enables 52-week analysis vs. old 4-week limit
 
-      const concurrency = 10;
+      const concurrency = config.processing.concurrency;
 
+      const episodeProcessingStart = performance.now();
       const processResult = await processEpisodesInRange(startDate, endDate, {
         concurrency,
         signal: controller.signal,
@@ -211,6 +225,10 @@ export const DashboardSetup: React.FC<Props> = ({ onDataLoaded, onUseDemo }) => 
           });
         }
       });
+      const episodeProcessingMs = performance.now() - episodeProcessingStart;
+      if (runLabel) {
+        runLogger?.recordEpisodeProcessing(runLabel, processResult, episodeProcessingMs);
+      }
 
       if (controller.signal.aborted) {
         throw new Error('Processing cancelled');
@@ -219,6 +237,10 @@ export const DashboardSetup: React.FC<Props> = ({ onDataLoaded, onUseDemo }) => 
       // Validate episode processing results
       if (processResult.stats.totalEpisodes === 0) {
         setError("No episodes found in the selected date range.");
+        if (runLabel) {
+          await runLogger?.fail(runLabel, new Error('No episodes found in selected date range'));
+          runLoggerEnded = true;
+        }
         return;
       }
 
@@ -228,6 +250,10 @@ export const DashboardSetup: React.FC<Props> = ({ onDataLoaded, onUseDemo }) => 
 
       if (processResult.stats.failed === processResult.stats.totalEpisodes) {
         setError("All episodes failed to process. Please check your API key and try again.");
+        if (runLabel) {
+          await runLogger?.fail(runLabel, new Error('All episodes failed to process'));
+          runLoggerEnded = true;
+        }
         return;
       }
 
@@ -240,6 +266,7 @@ export const DashboardSetup: React.FC<Props> = ({ onDataLoaded, onUseDemo }) => 
         currentItem: 'Composing weekly reports...'
       });
 
+      const weeklyCompositionStart = performance.now();
       for (let i = 0; i < windows.length; i++) {
         if (controller.signal.aborted) {
           throw new Error('Processing cancelled');
@@ -256,6 +283,10 @@ export const DashboardSetup: React.FC<Props> = ({ onDataLoaded, onUseDemo }) => 
           currentItem: `Composing ${w.start} -> ${w.end}`
         });
       }
+      const weeklyCompositionMs = performance.now() - weeklyCompositionStart;
+      if (runLabel) {
+        runLogger?.recordWeeklyComposition(runLabel, reports, weeklyCompositionMs);
+      }
 
       // Validate weekly coverage - ensure all weeks have at least some episode data
       const weeksWithoutEpisodes = reports.filter(r => r.sources_analyzed.length === 0);
@@ -266,15 +297,31 @@ export const DashboardSetup: React.FC<Props> = ({ onDataLoaded, onUseDemo }) => 
 
       if (weeksWithoutEpisodes.length === reports.length) {
         setError("No episode coverage found for any week in the selected range. Try a different date range.");
+        if (runLabel) {
+          await runLogger?.fail(runLabel, new Error('No episode coverage found for any week'));
+          runLoggerEnded = true;
+        }
         return;
       }
 
       // Phase 3: Aggregate and display
       const finalReport = aggregateReports(reports);
       onDataLoaded(finalReport);
+      if (runLabel) {
+        await runLogger?.finish(runLabel);
+        runLoggerEnded = true;
+      }
 
     } catch (err: any) {
       console.error(err);
+      try {
+        if (runLabel && !runLoggerEnded) {
+          await runLogger?.fail(runLabel, err);
+          runLoggerEnded = true;
+        }
+      } catch {
+        // Ignore logger failures
+      }
       if (err?.message === 'Processing cancelled') {
         setError("Analysis cancelled.");
         setProgress({

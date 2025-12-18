@@ -7,6 +7,8 @@ import './test-weeklyCache';
 import './test-cachesStaleness';
 import './test-frameworkVersioning';
 import './test-executiveSummary';
+import './test-performanceBench';
+import './test-realWorldRunLogger';
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {

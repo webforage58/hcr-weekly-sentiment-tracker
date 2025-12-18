@@ -1,5 +1,5 @@
 
-import React, { useState, useRef } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { X, Loader2, TrendingUp, LineChart, Activity, Download } from 'lucide-react';
 import { 
   ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer 
@@ -24,6 +24,15 @@ export const BrainstormModal: React.FC<Props> = ({ isOpen, onClose, report }) =>
   // Custom date range state (defaults to report date range)
   const [startDate, setStartDate] = useState(report.run_window.window_start);
   const [endDate, setEndDate] = useState(report.run_window.window_end);
+
+  // Keep defaults in sync when a new report is generated or modal is reopened.
+  useEffect(() => {
+    if (!isOpen) return;
+    setStartDate(report.run_window.window_start);
+    setEndDate(report.run_window.window_end);
+    setData(null);
+    setError(null);
+  }, [isOpen, report.run_window.window_start, report.run_window.window_end]);
 
   if (!isOpen) return null;
 
