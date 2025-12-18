@@ -19,9 +19,10 @@ import {
   deleteWeeklyAggregation
 } from './episodeDB';
 import { computeDeltas, normalizeTopic, rankIssues, DeltaResult } from '../utils/aggregation';
+import { FRAMEWORK_VERSION } from '../constants/frameworkVersion';
 
 // Current framework version for cache validation
-const CURRENT_FRAMEWORK_VERSION = 'v2.0.0';
+const CURRENT_FRAMEWORK_VERSION = FRAMEWORK_VERSION;
 
 // Algorithm version hash - update when ranking/aggregation logic changes
 // This ensures cache invalidation when the composition algorithm changes

@@ -9,10 +9,10 @@
 ## Current Phase
 
 **Phase**: Phase 4 - Optimization
-**Status**: In Progress (1/4 tasks complete)
+**Status**: In Progress (2/4 tasks complete)
 **Start Date**: 2025-12-17
-**Current Task**: Task 4.2 - Implement framework versioning
-**Completed Tasks**: Task 4.1 ✅ (2025-12-17)
+**Current Task**: Task 4.3 - Add Executive Summary Synthesis (optional)
+**Completed Tasks**: Task 4.1 ✅ (2025-12-17), Task 4.2 ✅ (2025-12-17)
 
 ---
 
@@ -84,13 +84,15 @@
 
 ### 🟢 Phase 4: Optimization (Target: 1 day)
 - [x] Task 4.1: Incremental analysis (skip cached episodes)
-- [ ] Task 4.2: Framework versioning
+- [x] Task 4.2: Framework versioning
 - [ ] Task 4.3: Executive summary synthesis (optional AI call)
 - [ ] Task 4.4: Add configuration options
 
-**Status**: In Progress (1/4 tasks complete - 25%)
+**Status**: In Progress (2/4 tasks complete - 50%)
 **Blockers**: None
-**Notes**: Task 4.1 completed on 2025-12-17. Most functionality was already present from Phase 2 (Task 2.3). Added cache staleness detection as the missing piece - episodes cached longer than a configurable threshold are automatically reprocessed. Created comprehensive test suite (test-cachesStaleness.ts) with 5 test scenarios.
+**Notes**:
+- Task 4.1 completed on 2025-12-17. Most functionality was already present from Phase 2 (Task 2.3). Added cache staleness detection as the missing piece - episodes cached longer than a configurable threshold are automatically reprocessed. Created comprehensive test suite (test-cachesStaleness.ts) with 5 test scenarios.
+- Task 4.2 completed on 2025-12-17. Created centralized framework version management system with FRAMEWORK_VERSION constant, version comparison utilities, and reprocessing functions. Added getEpisodesNeedingUpdate(), getEpisodeCountsByVersion(), reprocessWithFrameworkVersion(), and upgradeEpisodeToCurrentVersion(). Updated episodeProcessor.ts and reportComposer.ts to use centralized constant. Added version display UI in DashboardSetup. Created comprehensive test suite (test-frameworkVersioning.ts) with 10 test scenarios. Build passes successfully.
 
 ### ⬜ Phase 5: Scale Testing (Target: 1 day)
 - [ ] Test with 52 weeks (100+ episodes)
@@ -268,10 +270,10 @@ Display dashboard
 
 ## Next Actions
 
-1. **Immediate**: Continue Phase 4 - Task 4.2 (Implement framework versioning)
-2. **Today**: Complete remaining Phase 4 optimization tasks (framework versioning, executive summary synthesis, configuration options)
+1. **Immediate**: Continue Phase 4 - Task 4.3 (Add Executive Summary Synthesis - optional)
+2. **Today**: Complete remaining Phase 4 optimization tasks (executive summary synthesis, configuration options)
 3. **This Week**: Execute Phase 5 scale testing and performance documentation
-4. **Note**: Task 4.1 complete (2025-12-17) - cache staleness detection added. Most incremental analysis was already implemented in Phase 2.
+4. **Note**: Task 4.1 complete (2025-12-17) - cache staleness detection added. Task 4.2 complete (2025-12-17) - framework versioning system fully implemented.
 
 ---
 
@@ -494,6 +496,47 @@ Display dashboard
 - **Available in browser console:** `window.testCacheStaleness.runAll()`
 - **Files modified:** `services/episodeProcessor.ts`, `index.tsx`
 - **Files created:** `test-cachesStaleness.ts`
+- **Build passes successfully** - TypeScript compilation verified
+
+**Task 4.2 (2025-12-17):**
+- **Created centralized framework version management system:**
+  - Created `constants/frameworkVersion.ts` with FRAMEWORK_VERSION = "v2.0.0" constant
+  - Added FRAMEWORK_CHANGELOG documenting changes in each version (v2.0.0, v1.0.0, v1-legacy)
+  - Implemented version comparison utilities: compareVersions(), isVersionOutdated(), getAllVersions(), getVersionChangelog()
+  - Handles semantic versioning and special "v1-legacy" version from migration
+- **Implemented version management functions in episodeProcessor.ts:**
+  - getEpisodesNeedingUpdate() - Identifies all episodes with outdated framework versions
+  - getEpisodeCountsByVersion() - Returns episode count distribution by version (useful for analytics/UI)
+  - reprocessWithFrameworkVersion() - Main reprocessing function with flexible options:
+    - Reprocess all outdated episodes or specific source version
+    - Optional date range filtering to limit scope
+    - Full ProcessOptions support (concurrency, callbacks, abort signals)
+    - Force reprocess option to override cache
+    - Returns ProcessResult with detailed statistics and error tracking
+  - upgradeEpisodeToCurrentVersion() - Single-episode upgrade function for targeted updates
+- **Updated existing code to use centralized constant:**
+  - Updated episodeProcessor.ts default options: frameworkVersion = FRAMEWORK_VERSION
+  - Updated reportComposer.ts: CURRENT_FRAMEWORK_VERSION = FRAMEWORK_VERSION
+  - Episode tagging already implemented in Task 2.1 (analyzeEpisode function)
+  - All new episodes automatically tagged with current version
+- **Added minimal version display UI:**
+  - Added version footer to DashboardSetup component showing current framework version
+  - Non-intrusive, informative display for users and developers
+  - Imported FRAMEWORK_VERSION constant into React component
+- **Created comprehensive test suite:** `test-frameworkVersioning.ts` with 10 test scenarios:
+  1. testVersionComparison() - Validates version comparison logic (v2.0.0 > v1.0.0, etc.)
+  2. testVersionOutdatedCheck() - Tests isVersionOutdated() function
+  3. testGetAllVersions() - Lists all known versions with changelog
+  4. testEpisodeVersionDistribution() - Shows episode count by version from database
+  5. testGetEpisodesNeedingUpdate() - Identifies outdated episodes needing upgrade
+  6. testCreateMixedVersionEpisodes() - Creates test data with v1-legacy, v1.0.0, v2.0.0 episodes
+  7. testCleanupTestEpisodes() - Lists and cleanup instructions for test episodes
+  8. testUpgradeSingleEpisode() - Demonstrates upgradeEpisodeToCurrentVersion() usage (dry run)
+  9. testReprocessWithVersion() - Demonstrates batch reprocessing options (dry run)
+  10. testBackwardCompatibility() - Verifies all versions can be read without errors
+- **Available in browser console:** `window.testFrameworkVersioning.runAll()`
+- **Files created:** `constants/frameworkVersion.ts`, `test-frameworkVersioning.ts`
+- **Files modified:** `services/episodeProcessor.ts`, `services/reportComposer.ts`, `components/DashboardSetup.tsx`, `index.tsx`
 - **Build passes successfully** - TypeScript compilation verified
 
 ---

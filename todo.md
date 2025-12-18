@@ -1227,9 +1227,10 @@ async function processEpisodesInRange(
 ---
 
 ### Task 4.2: Implement Framework Versioning
-**Status**: ⬜ Not Started
+**Status**: ✅ Complete
 **Priority**: Medium
 **Estimated Time**: 1.5 hours
+**Completed**: 2025-12-17
 
 **Description**:
 Add version tracking to enable selective reprocessing when analysis logic changes.
@@ -1277,21 +1278,52 @@ async function upgradeEpisodeToCurrentVersion(
 ```
 
 **Acceptance Criteria**:
-- [ ] All new episodes tagged with current framework version
-- [ ] Can identify episodes needing update
-- [ ] Reprocessing updates version tag correctly
-- [ ] Reports can mix versions without crashing (with warning)
-- [ ] Version displayed in UI (optional)
+- [x] All new episodes tagged with current framework version
+- [x] Can identify episodes needing update
+- [x] Reprocessing updates version tag correctly
+- [x] Reports can mix versions without crashing (with warning)
+- [x] Version displayed in UI (optional)
 
-**Files to Create**:
-- `constants/frameworkVersion.ts`
+**Files Created**:
+- `constants/frameworkVersion.ts` - Centralized framework version constant and utilities
+- `test-frameworkVersioning.ts` - Comprehensive test suite with 10 test scenarios
 
-**Files to Modify**:
-- `services/gemini.ts` (add version to `analyzeEpisode()`)
-- `services/episodeProcessor.ts` (add reprocessing function)
-- `components/DashboardSetup.tsx` (optional UI)
+**Files Modified**:
+- `services/gemini.ts` - Already tags episodes with framework version (completed in Task 2.1)
+- `services/episodeProcessor.ts` - Added version management functions, updated to use centralized constant
+- `services/reportComposer.ts` - Updated to use centralized framework version constant
+- `components/DashboardSetup.tsx` - Added version display footer
+- `index.tsx` - Imported test file for browser console access
 
-**Dependencies**: Task 4.1 complete
+**Implementation Notes**:
+- Created centralized framework version management system with FRAMEWORK_VERSION = "v2.0.0"
+- Added version comparison utilities: compareVersions(), isVersionOutdated(), getAllVersions()
+- Implemented getEpisodesNeedingUpdate() to identify outdated episodes
+- Implemented getEpisodeCountsByVersion() to show version distribution
+- Created reprocessWithFrameworkVersion() function with flexible options:
+  - Reprocess all outdated episodes or specific version
+  - Optional date range filtering
+  - Progress callbacks and error handling
+  - Force reprocess option
+- Added upgradeEpisodeToCurrentVersion() for single-episode upgrades
+- Updated episodeProcessor.ts default options to use FRAMEWORK_VERSION constant
+- Updated reportComposer.ts to use centralized constant (CURRENT_FRAMEWORK_VERSION = FRAMEWORK_VERSION)
+- Added minimal version display UI in DashboardSetup (footer showing current version)
+- Created comprehensive test suite (test-frameworkVersioning.ts) with 10 test functions:
+  1. testVersionComparison() - Tests version comparison logic
+  2. testVersionOutdatedCheck() - Tests outdated version detection
+  3. testGetAllVersions() - Lists all known versions with changelog
+  4. testEpisodeVersionDistribution() - Shows episode count by version
+  5. testGetEpisodesNeedingUpdate() - Identifies outdated episodes
+  6. testCreateMixedVersionEpisodes() - Creates test data with mixed versions
+  7. testCleanupTestEpisodes() - Cleans up test data
+  8. testUpgradeSingleEpisode() - Demonstrates single episode upgrade
+  9. testReprocessWithVersion() - Demonstrates batch reprocessing
+  10. testBackwardCompatibility() - Verifies all versions can be read
+- All tests available in browser console via window.testFrameworkVersioning
+- TypeScript compilation verified - build passes successfully
+
+**Dependencies**: Task 4.1 complete ✅
 
 ---
 

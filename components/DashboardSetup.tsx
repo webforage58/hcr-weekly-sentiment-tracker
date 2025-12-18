@@ -5,6 +5,7 @@ import { processEpisodesInRange, estimateProcessingTime } from '../services/epis
 import { composeWeeklyReport } from '../services/reportComposer';
 import { getWeekWindows, aggregateReports } from '../utils/reportUtils';
 import { migrateWeeklyReportsToEpisodes, isMigrationNeeded, getMigrationStats } from '../utils/migration';
+import { FRAMEWORK_VERSION } from '../constants/frameworkVersion';
 
 interface Props {
   onDataLoaded: (data: HCRReport) => void;
@@ -563,6 +564,11 @@ export const DashboardSetup: React.FC<Props> = ({ onDataLoaded, onUseDemo }) => 
           </div>
         </div>
       )}
+
+      {/* Framework Version Footer */}
+      <div className="text-center text-xs text-slate-400 mt-8">
+        Framework Version: {FRAMEWORK_VERSION}
+      </div>
     </div>
   );
 };

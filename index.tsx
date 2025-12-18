@@ -5,6 +5,7 @@ import App from './App';
 // Import test suites for browser console access
 import './test-weeklyCache';
 import './test-cachesStaleness';
+import './test-frameworkVersioning';
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
